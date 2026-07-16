@@ -1,0 +1,4 @@
+module.exports = {
+  FREE_LIFETIME_LIMIT: 3,
+  MONTHLY_SUBSCRIBER_LIMIT: 100,
+};

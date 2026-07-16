@@ -8,36 +8,75 @@
 </head>
 <body>
   <header class="site-header">
-    <div class="container">
-      <h1>CV Tailor</h1>
-      <p class="tagline">Paste your CV and a job description. Get back a tailored, honest, better-matched CV.</p>
+    <div class="container header-row">
+      <div>
+        <h1>CV Tailor</h1>
+        <p class="tagline">Paste your CV and a job description. Get back a tailored, honest, better-matched CV.</p>
+      </div>
+      <div id="account-box" class="account-box hidden">
+        <span id="account-email" class="account-email"></span>
+        <span id="account-status" class="account-status"></span>
+        <button id="logout-btn" class="btn btn-ghost">Log out</button>
+      </div>
     </div>
   </header>
 
   <main class="container">
-    <section class="input-grid">
-      <div class="field">
-        <label for="cv-input">Your CV</label>
-        <textarea id="cv-input" placeholder="Paste your full CV text here..." spellcheck="false"></textarea>
-      </div>
-      <div class="field">
-        <label for="jd-input">Job Description</label>
-        <textarea id="jd-input" placeholder="Paste the job description here..." spellcheck="false"></textarea>
+
+    <!-- AUTH SECTION: shown when logged out -->
+    <section id="auth-section" class="auth-section">
+      <div class="auth-card">
+        <div class="auth-tabs">
+          <button id="tab-login" class="auth-tab active" type="button">Log in</button>
+          <button id="tab-signup" class="auth-tab" type="button">Sign up</button>
+        </div>
+
+        <form id="auth-form" class="auth-form">
+          <label for="auth-email">Email</label>
+          <input type="email" id="auth-email" required autocomplete="email" />
+
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" required autocomplete="current-password" minlength="6" />
+
+          <button type="submit" id="auth-submit-btn" class="btn btn-primary">Log in</button>
+          <p id="auth-msg" class="status-msg" aria-live="polite"></p>
+        </form>
+        <p class="auth-note">Free: 3 tailored CVs. Subscribe for up to 100 per month.</p>
       </div>
     </section>
 
-    <div class="action-row">
-      <button id="tailor-btn" class="btn btn-primary">Tailor CV</button>
-      <span id="status-msg" class="status-msg" aria-live="polite"></span>
-    </div>
+    <!-- APP SECTION: shown when logged in -->
+    <section id="app-section" class="hidden">
 
-    <section id="result-section" class="result-section hidden">
-      <h2>Tailored CV</h2>
-      <div id="result-output" class="result-output"></div>
-      <div class="action-row">
-        <button id="download-docx-btn" class="btn btn-secondary">Download as Word</button>
-        <button id="download-pdf-btn" class="btn btn-secondary">Download as PDF</button>
+      <div id="paywall-banner" class="paywall-banner hidden">
+        <p id="paywall-text">You've used all your free tailored CVs. Subscribe for more.</p>
+        <button id="subscribe-btn" class="btn btn-primary">Subscribe</button>
       </div>
+
+      <section class="input-grid">
+        <div class="field">
+          <label for="cv-input">Your CV</label>
+          <textarea id="cv-input" placeholder="Paste your full CV text here..." spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label for="jd-input">Job Description</label>
+          <textarea id="jd-input" placeholder="Paste the job description here..." spellcheck="false"></textarea>
+        </div>
+      </section>
+
+      <div class="action-row">
+        <button id="tailor-btn" class="btn btn-primary">Tailor CV</button>
+        <span id="status-msg" class="status-msg" aria-live="polite"></span>
+      </div>
+
+      <section id="result-section" class="result-section hidden">
+        <h2>Tailored CV</h2>
+        <div id="result-output" class="result-output"></div>
+        <div class="action-row">
+          <button id="download-docx-btn" class="btn btn-secondary">Download as Word</button>
+          <button id="download-pdf-btn" class="btn btn-secondary">Download as PDF</button>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -47,6 +86,7 @@
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

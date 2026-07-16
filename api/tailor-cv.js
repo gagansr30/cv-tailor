@@ -2,7 +2,9 @@
 // Accepts { cv, jobDescription } and returns a tailored, structured CV as JSON.
 // Calls the Anthropic Claude API server-side. The API key is read from the
 // CLAUDE_API_KEY environment variable and is never sent to the frontend.
+// Requires a logged-in Supabase user and enforces free/subscriber usage limits.
 
+require("./_lib/loadEnv");
 const fs = require("fs");
 const path = require("path");
 
@@ -45,12 +47,13 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
+const { getAuthedUser } = require("./_lib/auth");
+const { getSupabaseAdmin } = require("./_lib/supabaseAdmin");
+const { FREE_LIFETIME_LIMIT, MONTHLY_SUBSCRIBER_LIMIT } = require("./_lib/constants");
+
 // --- very simple in-memory rate limiter -------------------------------
-// This resets whenever the serverless function cold-starts, so it is NOT a
-// robust production rate limiter, just a basic speed bump until payments /
-// a real rate-limiting service (e.g. Upstash Redis) are added.
-const requestLog = new Map(); // ip -> array of timestamps (ms)
-const WINDOW_MS = 60 * 1000; // 1 minute window
+const requestLog = new Map();
+const WINDOW_MS = 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = 5;
 
 function isRateLimited(ip) {
@@ -134,6 +137,39 @@ module.exports = async (req, res) => {
     return;
   }
 
+  let authed;
+  try {
+    authed = await getAuthedUser(req);
+  } catch (err) {
+    console.error("Error verifying user:", err);
+    res.status(500).json({ error: "Could not verify your account. Please try again." });
+    return;
+  }
+
+  if (!authed) {
+    res.status(401).json({ error: "Please log in to tailor your CV." });
+    return;
+  }
+
+  const { user, profile } = authed;
+  const isSubscribed = profile.subscription_status === "active";
+
+  if (!isSubscribed && profile.usage_count >= FREE_LIFETIME_LIMIT) {
+    res.status(402).json({
+      error: `You've used all ${FREE_LIFETIME_LIMIT} free tailored CVs. Subscribe for up to ${MONTHLY_SUBSCRIBER_LIMIT} per month.`,
+      requiresSubscription: true,
+    });
+    return;
+  }
+
+  if (isSubscribed && profile.monthly_usage_count >= MONTHLY_SUBSCRIBER_LIMIT) {
+    res.status(402).json({
+      error: `You've used all ${MONTHLY_SUBSCRIBER_LIMIT} tailored CVs for this month. Your limit resets on the 1st.`,
+      monthlyLimitReached: true,
+    });
+    return;
+  }
+
   try {
     const { cv, jobDescription } = req.body || {};
 
@@ -210,7 +246,6 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       return;
     }
 
-    // Claude is instructed to return raw JSON, but strip code fences defensively.
     const cleaned = textBlock.text
       .trim()
       .replace(/^```json\s*/i, "")
@@ -228,7 +263,6 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       return;
     }
 
-    // Basic shape defaults so downstream rendering never crashes.
     tailoredCv.name = tailoredCv.name || "";
     tailoredCv.contact = tailoredCv.contact || "";
     tailoredCv.summary = tailoredCv.summary || "";
@@ -239,6 +273,26 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       ? tailoredCv.education
       : [];
     tailoredCv.skills = Array.isArray(tailoredCv.skills) ? tailoredCv.skills : [];
+
+    if (!isSubscribed) {
+      const supabase = getSupabaseAdmin();
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ usage_count: profile.usage_count + 1 })
+        .eq("id", user.id);
+      if (updateError) {
+        console.error("Failed to increment usage_count:", updateError.message);
+      }
+    } else {
+      const supabase = getSupabaseAdmin();
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ monthly_usage_count: profile.monthly_usage_count + 1 })
+        .eq("id", user.id);
+      if (updateError) {
+        console.error("Failed to increment monthly_usage_count:", updateError.message);
+      }
+    }
 
     res.status(200).json({ tailoredCv });
   } catch (err) {

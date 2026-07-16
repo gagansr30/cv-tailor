@@ -1,4 +1,4 @@
-// CV Tailor frontend logic
+// CV Tailor frontend logic — auth + tailoring + downloads + subscription paywall
 
 const cvInput = document.getElementById("cv-input");
 const jdInput = document.getElementById("jd-input");
@@ -9,54 +9,186 @@ const resultOutput = document.getElementById("result-output");
 const downloadDocxBtn = document.getElementById("download-docx-btn");
 const downloadPdfBtn = document.getElementById("download-pdf-btn");
 
+const authSection = document.getElementById("auth-section");
+const appSection = document.getElementById("app-section");
+const accountBox = document.getElementById("account-box");
+const accountEmail = document.getElementById("account-email");
+const accountStatus = document.getElementById("account-status");
+const logoutBtn = document.getElementById("logout-btn");
+
+const tabLogin = document.getElementById("tab-login");
+const tabSignup = document.getElementById("tab-signup");
+const authForm = document.getElementById("auth-form");
+const authEmailInput = document.getElementById("auth-email");
+const authPasswordInput = document.getElementById("auth-password");
+const authSubmitBtn = document.getElementById("auth-submit-btn");
+const authMsg = document.getElementById("auth-msg");
+
+const paywallBanner = document.getElementById("paywall-banner");
+const paywallText = document.getElementById("paywall-text");
+const subscribeBtn = document.getElementById("subscribe-btn");
+
 let currentTailoredCv = null;
+let supabaseClient = null;
+let authMode = "login"; // "login" | "signup"
+let currentUserStatus = null; // { usageCount, freeLimit, isSubscribed, ... }
 
-// --- simple client-side usage protection ---------------------------------
-// Basic speed bump + daily cap until real payments/rate limiting are added.
-const COOLDOWN_MS = 15 * 1000;
-const DAILY_LIMIT = 8;
-const STORAGE_KEY = "cvTailorUsage";
+// --- bootstrap: fetch public config, init Supabase client -------------------
 
-function getUsage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { date: todayString(), count: 0 };
-    const parsed = JSON.parse(raw);
-    if (parsed.date !== todayString()) return { date: todayString(), count: 0 };
-    return parsed;
-  } catch {
-    return { date: todayString(), count: 0 };
+async function init() {
+  const configResponse = await fetch("/api/config");
+  const config = await configResponse.json();
+
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    document.body.innerHTML =
+      '<p style="padding:40px;font-family:sans-serif;">This site is not configured yet (missing Supabase settings). Contact the site owner.</p>';
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+  // Handle Stripe checkout redirect back to us.
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("checkout") === "success") {
+    setStatus("Subscription active — thanks! Refreshing your account...");
+    window.history.replaceState({}, "", window.location.pathname);
+  } else if (params.get("checkout") === "cancelled") {
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    handleSession(session);
+  });
+
+  const { data } = await supabaseClient.auth.getSession();
+  handleSession(data.session);
+}
+
+async function handleSession(session) {
+  if (session && session.user) {
+    authSection.classList.add("hidden");
+    appSection.classList.remove("hidden");
+    accountBox.classList.remove("hidden");
+    accountEmail.textContent = session.user.email;
+    await refreshUserStatus();
+  } else {
+    authSection.classList.remove("hidden");
+    appSection.classList.add("hidden");
+    accountBox.classList.add("hidden");
   }
 }
 
-function todayString() {
-  return new Date().toISOString().slice(0, 10);
+async function getAccessToken() {
+  const { data } = await supabaseClient.auth.getSession();
+  return data.session ? data.session.access_token : null;
 }
 
-function recordUsage() {
-  const usage = getUsage();
-  usage.count += 1;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(usage));
+async function authedFetch(url, options = {}) {
+  const token = await getAccessToken();
+  const headers = { ...(options.headers || {}), Authorization: `Bearer ${token}` };
+  return fetch(url, { ...options, headers });
 }
 
-function startCooldown(ms) {
-  tailorBtn.disabled = true;
-  let remaining = Math.ceil(ms / 1000);
-  const originalText = "Tailor CV";
-  tailorBtn.textContent = `Please wait (${remaining}s)`;
-  const interval = setInterval(() => {
-    remaining -= 1;
-    if (remaining <= 0) {
-      clearInterval(interval);
-      tailorBtn.disabled = false;
-      tailorBtn.textContent = originalText;
-    } else {
-      tailorBtn.textContent = `Please wait (${remaining}s)`;
+// --- account status / paywall -----------------------------------------------
+
+async function refreshUserStatus() {
+  try {
+    const response = await authedFetch("/api/user-status");
+    const data = await response.json();
+    if (!response.ok) return;
+
+    currentUserStatus = data;
+    accountStatus.textContent = data.isSubscribed
+      ? `${data.remaining}/${data.monthlyLimit} this month`
+      : `${data.remainingFree}/${data.freeLimit} free left`;
+
+    const shouldShowPaywall = data.remaining <= 0;
+    paywallBanner.classList.toggle("hidden", !shouldShowPaywall);
+    tailorBtn.disabled = shouldShowPaywall;
+
+    if (shouldShowPaywall) {
+      if (data.isSubscribed) {
+        paywallText.textContent = `You've used all ${data.monthlyLimit} tailored CVs for this month. Your limit resets on the 1st.`;
+        subscribeBtn.classList.add("hidden");
+      } else {
+        paywallText.textContent = "You've used all your free tailored CVs. Subscribe for more.";
+        subscribeBtn.classList.remove("hidden");
+      }
     }
-  }, 1000);
+  } catch (err) {
+    console.error("Failed to load account status:", err);
+  }
 }
 
-// --- rendering -------------------------------------------------------------
+async function startCheckout() {
+  const btn = subscribeBtn;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Redirecting...";
+  try {
+    const response = await authedFetch("/api/create-checkout-session", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok || !data.url) {
+      setStatus(data.error || "Could not start checkout.", true);
+      btn.disabled = false;
+      btn.textContent = originalText;
+      return;
+    }
+    window.location.href = data.url;
+  } catch (err) {
+    console.error(err);
+    setStatus("Network error starting checkout.", true);
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+subscribeBtn.addEventListener("click", startCheckout);
+
+// --- auth: login / signup / logout ------------------------------------------
+
+function setAuthMode(mode) {
+  authMode = mode;
+  tabLogin.classList.toggle("active", mode === "login");
+  tabSignup.classList.toggle("active", mode === "signup");
+  authSubmitBtn.textContent = mode === "login" ? "Log in" : "Sign up";
+  authMsg.textContent = "";
+}
+
+tabLogin.addEventListener("click", () => setAuthMode("login"));
+tabSignup.addEventListener("click", () => setAuthMode("signup"));
+
+authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = authEmailInput.value.trim();
+  const password = authPasswordInput.value;
+
+  authSubmitBtn.disabled = true;
+  authMsg.textContent = "";
+  authMsg.classList.remove("error");
+
+  try {
+    if (authMode === "signup") {
+      const { error } = await supabaseClient.auth.signUp({ email, password });
+      if (error) throw error;
+      authMsg.textContent = "Account created! If email confirmation is required, check your inbox, then log in.";
+    } else {
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    }
+  } catch (err) {
+    authMsg.textContent = err.message || "Something went wrong.";
+    authMsg.classList.add("error");
+  } finally {
+    authSubmitBtn.disabled = false;
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await supabaseClient.auth.signOut();
+});
+
+// --- rendering ---------------------------------------------------------------
 
 function renderTailoredCv(cv) {
   const parts = [];
@@ -123,21 +255,12 @@ tailorBtn.addEventListener("click", async () => {
     return;
   }
 
-  const usage = getUsage();
-  if (usage.count >= DAILY_LIMIT) {
-    setStatus(
-      `You've reached today's limit of ${DAILY_LIMIT} tailored CVs. Please try again tomorrow.`,
-      true
-    );
-    return;
-  }
-
   tailorBtn.disabled = true;
   setStatus("Tailoring your CV… this can take up to 20 seconds.");
   resultSection.classList.add("hidden");
 
   try {
-    const response = await fetch("/api/tailor-cv", {
+    const response = await authedFetch("/api/tailor-cv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cv, jobDescription }),
@@ -147,7 +270,9 @@ tailorBtn.addEventListener("click", async () => {
 
     if (!response.ok) {
       setStatus(data.error || "Something went wrong. Please try again.", true);
-      startCooldown(COOLDOWN_MS);
+      if (data.requiresSubscription || data.monthlyLimitReached) {
+        await refreshUserStatus();
+      }
       return;
     }
 
@@ -156,12 +281,14 @@ tailorBtn.addEventListener("click", async () => {
     resultSection.classList.remove("hidden");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
     setStatus("Done! Review the tailored CV below.");
-    recordUsage();
+    await refreshUserStatus();
   } catch (err) {
     console.error(err);
     setStatus("Network error. Please check your connection and try again.", true);
   } finally {
-    startCooldown(COOLDOWN_MS);
+    if (!currentUserStatus || currentUserStatus.isSubscribed || currentUserStatus.remainingFree > 0) {
+      tailorBtn.disabled = false;
+    }
   }
 });
 
@@ -176,7 +303,7 @@ async function downloadFile(endpoint, mimeExt) {
   btn.textContent = "Preparing…";
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await authedFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tailoredCv: currentTailoredCv }),
@@ -209,3 +336,5 @@ async function downloadFile(endpoint, mimeExt) {
 
 downloadDocxBtn.addEventListener("click", () => downloadFile("/api/generate-docx", "docx"));
 downloadPdfBtn.addEventListener("click", () => downloadFile("/api/generate-pdf", "pdf"));
+
+init();
