@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CV Tailor — Tailor your CV to any job description</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>CV Tailor</h1>
+      <p class="tagline">Paste your CV and a job description. Get back a tailored, honest, better-matched CV.</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="input-grid">
+      <div class="field">
+        <label for="cv-input">Your CV</label>
+        <textarea id="cv-input" placeholder="Paste your full CV text here..." spellcheck="false"></textarea>
+      </div>
+      <div class="field">
+        <label for="jd-input">Job Description</label>
+        <textarea id="jd-input" placeholder="Paste the job description here..." spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <div class="action-row">
+      <button id="tailor-btn" class="btn btn-primary">Tailor CV</button>
+      <span id="status-msg" class="status-msg" aria-live="polite"></span>
+    </div>
+
+    <section id="result-section" class="result-section hidden">
+      <h2>Tailored CV</h2>
+      <div id="result-output" class="result-output"></div>
+      <div class="action-row">
+        <button id="download-docx-btn" class="btn btn-secondary">Download as Word</button>
+        <button id="download-pdf-btn" class="btn btn-secondary">Download as PDF</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Your CV content is sent securely to generate a tailored version. No facts, skills, or experience are invented — only reordered and rephrased to match the role.</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

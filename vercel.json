@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/tailor-cv.js": {
+      "maxDuration": 30
+    },
+    "api/generate-docx.js": {
+      "maxDuration": 15
+    },
+    "api/generate-pdf.js": {
+      "maxDuration": 15
+    }
+  }
+}
