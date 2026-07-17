@@ -37,6 +37,21 @@ is to rewrite/restructure the CV so it better matches the job description:
 - Tighten and improve the professional summary so it speaks directly to the
   role.
 - Improve clarity, conciseness, and impact of bullet points.
+- Within the professional summary and each experience/project bullet, wrap the
+  3-6 most job-relevant keywords, tools, technologies, or quantified results
+  per item in **double asterisks** (e.g. "increased test coverage by **15%**
+  using **FastAPI**"), so a recruiter scanning quickly sees what matches the
+  job description at a glance. Be selective - bold only genuinely relevant
+  terms, not every noun. Never bold something that isn't a real, verifiable
+  fact from the original CV.
+- Ignore any editorial notes or placeholders enclosed in double or triple
+  parentheses, such as ((this is a note)) or (((note))). These are not part
+  of the candidate's real CV and should not appear in the output.
+- If the original CV contains broken formatting, line-wrapped bullets, or
+  stray hyphen markers, clean them into properly formatted bullet strings.
+- In the changes array, mention any issues you fixed in the original CV,
+  such as removed editorial notes, merged wrapped bullets, or corrected
+  malformed contact/section formatting.
 
 STRICT RULES (do not break these under any circumstances):
 - NEVER invent, exaggerate, or embellish any experience, employer, job title,
@@ -56,13 +71,13 @@ matching exactly this shape:
   "tailoredCv": {
     "name": "string, candidate's full name",
     "contact": "string, contact info line (email / phone / location / links), best-effort from original CV",
-    "summary": "string, 2-4 sentence tailored professional summary",
+    "summary": "string, 2-4 sentence tailored professional summary, with 3-6 key terms wrapped in **bold**",
     "experience": [
       {
         "title": "string, job title",
         "company": "string, company name",
         "dates": "string, e.g. 'Jan 2020 - Present'",
-        "bullets": ["string", "string"]
+        "bullets": ["string, with relevant keywords wrapped in **bold**", "string"]
       }
     ],
     "projects": [
@@ -70,7 +85,7 @@ matching exactly this shape:
         "title": "string, project name",
         "company": "string, e.g. 'Personal Project' or the institution/context",
         "dates": "string, e.g. 'Jul 2026 - Present'",
-        "bullets": ["string", "string"],
+        "bullets": ["string, with relevant keywords wrapped in **bold**", "string"],
         "link": "string, optional URL if a live demo/repo link exists in the original CV, otherwise omit or empty string"
       }
     ],
@@ -105,7 +120,92 @@ If a section is not present in the original CV (e.g. no education, no projects,
 no certifications, or no interests listed), return an empty array (or empty
 string for interests) for it rather than inventing content. Output raw JSON
 only.`;
+function stripBracketedNotes(text) {
+  if (typeof text !== "string" || !text) return "";
+  return text
+    .replace(/\(\(\(?[\s\S]*?\)\)+/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/^[ \t\n]+|[ \t\n]+$/g, "")
+    .trim();
+}
 
+function normalizeBulletText(item) {
+  if (typeof item !== "string" || !item.trim()) return [];
+  const lines = item.replace(/\r\n/g, "\n").split("\n");
+  const bullets = [];
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+
+    const normalized = line.replace(/^[\-\u2022•\*]+\s*/, "").trim();
+    if (/^[\-\u2022•\*]+\s*/.test(line)) {
+      bullets.push(normalized);
+    } else if (bullets.length > 0) {
+      bullets[bullets.length - 1] += " " + normalized;
+    } else {
+      bullets.push(normalized);
+    }
+  });
+
+  return bullets.filter(Boolean);
+}
+
+function sanitizeTailoredCv(cv) {
+  if (!cv || typeof cv !== "object") return;
+
+  const sanitizeString = (value) => stripBracketedNotes(String(value || ""));
+
+  cv.name = sanitizeString(cv.name);
+  cv.contact = sanitizeString(cv.contact);
+  cv.summary = sanitizeString(cv.summary);
+
+  if (Array.isArray(cv.experience)) {
+    cv.experience = cv.experience.map((entry) => ({
+      ...entry,
+      title: sanitizeString(entry.title),
+      company: sanitizeString(entry.company),
+      dates: sanitizeString(entry.dates),
+      bullets: Array.isArray(entry.bullets)
+        ? entry.bullets.flatMap(normalizeBulletText).map(sanitizeString)
+        : [],
+    }));
+  }
+
+  if (Array.isArray(cv.projects)) {
+    cv.projects = cv.projects.map((project) => ({
+      ...project,
+      title: sanitizeString(project.title),
+      company: sanitizeString(project.company),
+      dates: sanitizeString(project.dates),
+      link: sanitizeString(project.link),
+      bullets: Array.isArray(project.bullets)
+        ? project.bullets.flatMap(normalizeBulletText).map(sanitizeString)
+        : [],
+    }));
+  }
+
+  if (Array.isArray(cv.education)) {
+    cv.education = cv.education.map((edu) => ({
+      ...edu,
+      degree: sanitizeString(edu.degree),
+      institution: sanitizeString(edu.institution),
+      dates: sanitizeString(edu.dates),
+    }));
+  }
+
+  if (Array.isArray(cv.skills)) {
+    cv.skills = cv.skills.map(sanitizeString).filter(Boolean);
+  }
+
+  if (Array.isArray(cv.certifications)) {
+    cv.certifications = cv.certifications.map(sanitizeString).filter(Boolean);
+  }
+
+  cv.interests = sanitizeString(cv.interests);
+}
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -190,9 +290,10 @@ module.exports = async (req, res) => {
       return;
     }
 
+    const sanitizedCvText = stripBracketedNotes(cv);
     const userMessage = `ORIGINAL CV:
 """
-${cv}
+${sanitizedCvText}
 """
 
 JOB DESCRIPTION:
@@ -257,6 +358,8 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
     const tailoredCv = parsed.tailoredCv || parsed;
     const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
     const missingSkills = Array.isArray(parsed.missingSkills) ? parsed.missingSkills : [];
+
+    sanitizeTailoredCv(tailoredCv);
 
     // Basic shape defaults so downstream rendering never crashes.
     tailoredCv.name = tailoredCv.name || "";

@@ -1,42 +1,95 @@
 // /api/generate-docx.js
-// Accepts the tailored CV as structured JSON and returns a formatted .docx file.
+// Accepts the tailored CV as structured JSON and returns a formatted .docx file,
+// matching the user's exact template style: centered bold name/headings (no
+// color/border), company + right-tab-aligned dates on one line, italic role
+// title below, hyphen bullets, and inline **bold** keyword emphasis.
 
 const {
   Document,
   Packer,
   Paragraph,
   TextRun,
-  HeadingLevel,
   AlignmentType,
-  BorderStyle,
   ExternalHyperlink,
 } = require("docx");
+const { parseBoldSegments } = require("./_lib/boldSegments");
 
 const FONT = "Calibri";
-const ACCENT_COLOR = "1F3864"; // dark navy blue
+const BODY_SIZE = 23; // 11.5pt, half-points
+const NAME_SIZE = 26; // 13pt
+const DATE_TAB_POSITION = 9350; // right tab stop for dates, twips
+
+function textRunsFromSegments(text, extraProps = {}) {
+  return parseBoldSegments(text).map(
+    (seg) =>
+      new TextRun({
+        text: seg.text,
+        bold: seg.bold || extraProps.bold,
+        italics: extraProps.italics,
+        size: extraProps.size || BODY_SIZE,
+        font: FONT,
+      })
+  );
+}
 
 function sectionHeading(text) {
   return new Paragraph({
-    text,
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before: 300, after: 120 },
-    border: {
-      bottom: {
-        color: ACCENT_COLOR,
-        space: 2,
-        style: BorderStyle.SINGLE,
-        size: 6,
-      },
-    },
+    children: [
+      new TextRun({ text: text.toUpperCase(), bold: true, size: BODY_SIZE, font: FONT }),
+    ],
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 240, after: 120 },
   });
 }
 
 function bulletParagraph(text) {
   return new Paragraph({
-    text,
+    children: textRunsFromSegments(text),
     bullet: { level: 0 },
     spacing: { after: 80 },
   });
+}
+
+function roleHeaderParagraph(company, dates) {
+  return new Paragraph({
+    children: [
+      new TextRun({ text: company, bold: true, size: BODY_SIZE, font: FONT }),
+      new TextRun({ text: "\t", font: FONT }),
+      new TextRun({ text: dates || "", bold: true, size: BODY_SIZE, font: FONT }),
+    ],
+    tabStops: [{ type: "right", position: DATE_TAB_POSITION }],
+    spacing: { before: 140, after: 20 },
+  });
+}
+
+function titleParagraph(text) {
+  return new Paragraph({
+    children: [new TextRun({ text, italics: true, size: BODY_SIZE, font: FONT })],
+    spacing: { after: 60 },
+  });
+}
+
+function buildRoleBlock({ company, dates, title, bullets, link }) {
+  const paras = [];
+  paras.push(roleHeaderParagraph(company || "", dates || ""));
+  if (title) paras.push(titleParagraph(title));
+  (bullets || []).forEach((b) => paras.push(bulletParagraph(b)));
+  if (link) {
+    paras.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Live demo: ", size: BODY_SIZE, font: FONT }),
+          new ExternalHyperlink({
+            link,
+            children: [new TextRun({ text: link, size: BODY_SIZE, font: FONT, style: "Hyperlink" })],
+          }),
+        ],
+        bullet: { level: 0 },
+        spacing: { after: 80 },
+      })
+    );
+  }
+  return paras;
 }
 
 function buildDocument(cv) {
@@ -45,17 +98,9 @@ function buildDocument(cv) {
   // Name
   children.push(
     new Paragraph({
-      children: [
-        new TextRun({
-          text: cv.name || "Your Name",
-          bold: true,
-          size: 44, // 22pt
-          color: ACCENT_COLOR,
-          font: FONT,
-        }),
-      ],
+      children: [new TextRun({ text: cv.name || "Your Name", bold: true, size: NAME_SIZE, font: FONT })],
       alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
+      spacing: { after: 60 },
     })
   );
 
@@ -63,14 +108,7 @@ function buildDocument(cv) {
   if (cv.contact) {
     children.push(
       new Paragraph({
-        children: [
-          new TextRun({
-            text: cv.contact,
-            size: 20, // 10pt
-            font: FONT,
-            color: "444444",
-          }),
-        ],
+        children: [new TextRun({ text: cv.contact, size: BODY_SIZE, font: FONT })],
         alignment: AlignmentType.CENTER,
         spacing: { after: 200 },
       })
@@ -79,10 +117,10 @@ function buildDocument(cv) {
 
   // Professional Summary
   if (cv.summary) {
-    children.push(sectionHeading("Professional Summary"));
+    children.push(sectionHeading("Profile"));
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: cv.summary, font: FONT, size: 22 })],
+        children: textRunsFromSegments(cv.summary),
         spacing: { after: 160 },
       })
     );
@@ -92,43 +130,7 @@ function buildDocument(cv) {
   if (cv.experience && cv.experience.length > 0) {
     children.push(sectionHeading("Work Experience"));
     cv.experience.forEach((job) => {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: job.title || "",
-              bold: true,
-              size: 22,
-              font: FONT,
-            }),
-            new TextRun({
-              text: job.company ? `  |  ${job.company}` : "",
-              italics: true,
-              size: 22,
-              font: FONT,
-            }),
-          ],
-          spacing: { before: 120, after: 20 },
-        })
-      );
-      if (job.dates) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: job.dates,
-                size: 20,
-                color: "666666",
-                font: FONT,
-              }),
-            ],
-            spacing: { after: 60 },
-          })
-        );
-      }
-      (job.bullets || []).forEach((bullet) => {
-        children.push(bulletParagraph(bullet));
-      });
+      children.push(...buildRoleBlock({ company: job.company, dates: job.dates, title: job.title, bullets: job.bullets }));
     });
   }
 
@@ -137,59 +139,14 @@ function buildDocument(cv) {
     children.push(sectionHeading("Projects"));
     cv.projects.forEach((proj) => {
       children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: proj.title || "",
-              bold: true,
-              size: 22,
-              font: FONT,
-            }),
-            new TextRun({
-              text: proj.company ? `  |  ${proj.company}` : "",
-              italics: true,
-              size: 22,
-              font: FONT,
-            }),
-          ],
-          spacing: { before: 120, after: 20 },
+        ...buildRoleBlock({
+          company: proj.company,
+          dates: proj.dates,
+          title: proj.title,
+          bullets: proj.bullets,
+          link: proj.link,
         })
       );
-      if (proj.dates) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: proj.dates,
-                size: 20,
-                color: "666666",
-                font: FONT,
-              }),
-            ],
-            spacing: { after: 60 },
-          })
-        );
-      }
-      (proj.bullets || []).forEach((bullet) => {
-        children.push(bulletParagraph(bullet));
-      });
-      if (proj.link) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({ text: "Live demo: ", font: FONT, size: 22 }),
-              new ExternalHyperlink({
-                link: proj.link,
-                children: [
-                  new TextRun({ text: proj.link, font: FONT, size: 22, style: "Hyperlink" }),
-                ],
-              }),
-            ],
-            bullet: { level: 0 },
-            spacing: { after: 80 },
-          })
-        );
-      }
     });
   }
 
@@ -197,40 +154,7 @@ function buildDocument(cv) {
   if (cv.education && cv.education.length > 0) {
     children.push(sectionHeading("Education"));
     cv.education.forEach((edu) => {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: edu.degree || "",
-              bold: true,
-              size: 22,
-              font: FONT,
-            }),
-            new TextRun({
-              text: edu.institution ? `  |  ${edu.institution}` : "",
-              italics: true,
-              size: 22,
-              font: FONT,
-            }),
-          ],
-          spacing: { before: 100, after: 20 },
-        })
-      );
-      if (edu.dates) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: edu.dates,
-                size: 20,
-                color: "666666",
-                font: FONT,
-              }),
-            ],
-            spacing: { after: 100 },
-          })
-        );
-      }
+      children.push(...buildRoleBlock({ company: edu.institution, dates: edu.dates, title: edu.degree, bullets: [] }));
     });
   }
 
@@ -239,13 +163,7 @@ function buildDocument(cv) {
     children.push(sectionHeading("Skills"));
     children.push(
       new Paragraph({
-        children: [
-          new TextRun({
-            text: cv.skills.join("  •  "),
-            size: 22,
-            font: FONT,
-          }),
-        ],
+        children: [new TextRun({ text: "•  " + cv.skills.join("  •  "), size: BODY_SIZE, font: FONT })],
         spacing: { after: 100 },
       })
     );
@@ -254,9 +172,7 @@ function buildDocument(cv) {
   // Certifications
   if (cv.certifications && cv.certifications.length > 0) {
     children.push(sectionHeading("Certifications"));
-    cv.certifications.forEach((cert) => {
-      children.push(bulletParagraph(cert));
-    });
+    cv.certifications.forEach((cert) => children.push(bulletParagraph(cert)));
   }
 
   // Interests
@@ -264,7 +180,7 @@ function buildDocument(cv) {
     children.push(sectionHeading("Interests"));
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: cv.interests, size: 22, font: FONT })],
+        children: [new TextRun({ text: cv.interests, size: BODY_SIZE, font: FONT })],
         spacing: { after: 100 },
       })
     );
@@ -273,21 +189,11 @@ function buildDocument(cv) {
   return new Document({
     sections: [
       {
-        properties: {
-          page: {
-            margin: { top: 720, bottom: 720, left: 720, right: 720 }, // 0.5in margins
-          },
-        },
+        properties: { page: { margin: { top: 620, bottom: 620, left: 620, right: 620 } } },
         children,
       },
     ],
-    styles: {
-      default: {
-        document: {
-          run: { font: FONT, size: 22 },
-        },
-      },
-    },
+    styles: { default: { document: { run: { font: FONT, size: BODY_SIZE } } } },
   });
 }
 

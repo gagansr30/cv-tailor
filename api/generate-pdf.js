@@ -1,35 +1,32 @@
 // /api/generate-pdf.js
-// Accepts the tailored CV as structured JSON and returns a formatted .pdf file.
-// pdf-lib is low-level, so this file includes small helpers for text wrapping
-// and pagination (adding new pages when content runs out of room).
+// Accepts the tailored CV as structured JSON and returns a formatted .pdf file,
+// matching the same template style as generate-docx.js: centered plain
+// headings, tab-aligned dates, italic titles, hyphen bullets, and inline
+// **bold** keyword emphasis (rendered as mixed bold/regular text runs).
 
 const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+const { parseBoldSegments } = require("./_lib/boldSegments");
 
-const PAGE_WIDTH = 612; // US Letter, points
+const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
-const MARGIN = 54; // 0.75in
+const MARGIN = 54;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const ACCENT_COLOR = rgb(0x1f / 255, 0x38 / 255, 0x64 / 255);
-const GRAY = rgb(0.4, 0.4, 0.4);
 const BLACK = rgb(0.1, 0.1, 0.1);
+const GRAY = rgb(0.4, 0.4, 0.4);
+const LINK_COLOR = rgb(0.1, 0.2, 0.6);
 
-function wrapText(text, font, size, maxWidth) {
-  const words = (text || "").split(/\s+/).filter(Boolean);
-  const lines = [];
-  let currentLine = "";
-
-  words.forEach((word) => {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const width = font.widthOfTextAtSize(testLine, size);
-    if (width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
-    }
+// Splits bold-segment text into a flat list of "words" tagged with bold state,
+// preserving the single space between words (spaces attach to the word before them).
+function segmentsToWords(segments) {
+  const words = [];
+  segments.forEach((seg) => {
+    const parts = seg.text.split(" ");
+    parts.forEach((part, i) => {
+      if (part === "" && i === parts.length - 1) return; // trailing split artifact
+      words.push({ text: part + (i < parts.length - 1 ? " " : ""), bold: seg.bold });
+    });
   });
-  if (currentLine) lines.push(currentLine);
-  return lines.length > 0 ? lines : [""];
+  return words.filter((w) => w.text.length > 0);
 }
 
 class PdfWriter {
@@ -47,17 +44,9 @@ class PdfWriter {
     }
   }
 
-  drawLine({
-    text,
-    font = this.fonts.regular,
-    size = 11,
-    color = BLACK,
-    gapAfter = 4,
-    align = "left",
-    indent = 0,
-  }) {
+  drawLine({ text, font = this.fonts.regular, size = 11, color = BLACK, gapAfter = 4, align = "left" }) {
     this.ensureSpace(size + gapAfter);
-    let x = MARGIN + indent;
+    let x = MARGIN;
     if (align === "center") {
       const textWidth = font.widthOfTextAtSize(text, size);
       x = (PAGE_WIDTH - textWidth) / 2;
@@ -66,24 +55,40 @@ class PdfWriter {
     this.y -= size + gapAfter;
   }
 
-  drawWrapped({
-    text,
-    font = this.fonts.regular,
-    size = 11,
-    color = BLACK,
-    lineGap = 3,
-    gapAfter = 8,
-    indent = 0,
-  }) {
-    const lines = wrapText(text, font, size, CONTENT_WIDTH - indent);
+  // Draws text with inline **bold** support, wrapped, left-aligned, optionally centered as a whole block.
+  drawMixedWrapped({ text, size = 11, gapAfter = 8, lineGap = 3, indent = 0, center = false }) {
+    const words = segmentsToWords(parseBoldSegments(text));
+    const maxWidth = CONTENT_WIDTH - indent;
+
+    // Greedy line wrap, measuring each word with its correct font.
+    const lines = [];
+    let currentLine = [];
+    let currentWidth = 0;
+    words.forEach((w) => {
+      const font = w.bold ? this.fonts.bold : this.fonts.regular;
+      const wWidth = font.widthOfTextAtSize(w.text, size);
+      if (currentWidth + wWidth > maxWidth && currentLine.length > 0) {
+        lines.push(currentLine);
+        currentLine = [];
+        currentWidth = 0;
+      }
+      currentLine.push(w);
+      currentWidth += wWidth;
+    });
+    if (currentLine.length > 0) lines.push(currentLine);
+
     lines.forEach((line) => {
       this.ensureSpace(size + lineGap);
-      this.page.drawText(line, {
-        x: MARGIN + indent,
-        y: this.y - size,
-        size,
-        font,
-        color,
+      let lineWidth = 0;
+      line.forEach((w) => {
+        const font = w.bold ? this.fonts.bold : this.fonts.regular;
+        lineWidth += font.widthOfTextAtSize(w.text, size);
+      });
+      let x = center ? MARGIN + indent + (maxWidth - lineWidth) / 2 : MARGIN + indent;
+      line.forEach((w) => {
+        const font = w.bold ? this.fonts.bold : this.fonts.regular;
+        this.page.drawText(w.text, { x, y: this.y - size, size, font, color: BLACK });
+        x += font.widthOfTextAtSize(w.text, size);
       });
       this.y -= size + lineGap;
     });
@@ -92,44 +97,63 @@ class PdfWriter {
 
   drawSectionHeading(text) {
     this.ensureSpace(30);
-    this.y -= 8;
-    this.page.drawText(text.toUpperCase(), {
-      x: MARGIN,
-      y: this.y - 12,
-      size: 13,
-      font: this.fonts.bold,
-      color: ACCENT_COLOR,
-    });
-    this.y -= 16;
-    this.page.drawLine({
-      start: { x: MARGIN, y: this.y },
-      end: { x: PAGE_WIDTH - MARGIN, y: this.y },
-      thickness: 1,
-      color: ACCENT_COLOR,
-    });
-    this.y -= 14;
+    this.y -= 6;
+    const upper = text.toUpperCase();
+    const size = 12;
+    const textWidth = this.fonts.bold.widthOfTextAtSize(upper, size);
+    const x = (PAGE_WIDTH - textWidth) / 2;
+    this.page.drawText(upper, { x, y: this.y - size, size, font: this.fonts.bold, color: BLACK });
+    this.y -= size + 14;
   }
 
-  drawBullet(text, font, size) {
+  drawRoleHeader(company, dates) {
+    this.ensureSpace(16);
+    const size = 11;
+    this.page.drawText(company || "", { x: MARGIN, y: this.y - size, size, font: this.fonts.bold, color: BLACK });
+    if (dates) {
+      const dateWidth = this.fonts.bold.widthOfTextAtSize(dates, size);
+      this.page.drawText(dates, {
+        x: PAGE_WIDTH - MARGIN - dateWidth,
+        y: this.y - size,
+        size,
+        font: this.fonts.bold,
+        color: BLACK,
+      });
+    }
+    this.y -= size + 4;
+  }
+
+  drawMixedBullet(text, size = 11) {
     const bulletIndent = 14;
-    const lines = wrapText(text, font, size, CONTENT_WIDTH - bulletIndent);
+    const words = segmentsToWords(parseBoldSegments(text));
+    const maxWidth = CONTENT_WIDTH - bulletIndent;
+
+    const lines = [];
+    let currentLine = [];
+    let currentWidth = 0;
+    words.forEach((w) => {
+      const font = w.bold ? this.fonts.bold : this.fonts.regular;
+      const wWidth = font.widthOfTextAtSize(w.text, size);
+      if (currentWidth + wWidth > maxWidth && currentLine.length > 0) {
+        lines.push(currentLine);
+        currentLine = [];
+        currentWidth = 0;
+      }
+      currentLine.push(w);
+      currentWidth += wWidth;
+    });
+    if (currentLine.length > 0) lines.push(currentLine);
+
     lines.forEach((line, i) => {
       this.ensureSpace(size + 4);
       if (i === 0) {
-        this.page.drawText("•", {
-          x: MARGIN,
-          y: this.y - size,
-          size,
-          font,
-          color: BLACK,
-        });
+        this.page.drawText("-", { x: MARGIN, y: this.y - size, size, font: this.fonts.regular, color: BLACK });
       }
-      this.page.drawText(line, {
-        x: MARGIN + bulletIndent,
-        y: this.y - size,
-        size,
-        font,
-        color: BLACK,
+      let x = MARGIN + bulletIndent;
+      line.forEach((w) => {
+        const font = w.bold ? this.fonts.bold : this.fonts.regular;
+        this.page.drawText(w.text, { x, y: this.y - size, size, font, color: BLACK });
+        x += font.widthOfTextAtSize(w.text, size);
       });
       this.y -= size + 4;
     });
@@ -147,112 +171,59 @@ async function buildPdf(cv) {
 
   const writer = new PdfWriter(pdfDoc, fonts);
 
-  // Name
-  writer.drawLine({
-    text: cv.name || "Your Name",
-    font: fonts.bold,
-    size: 22,
-    color: ACCENT_COLOR,
-    align: "center",
-    gapAfter: 6,
-  });
-
-  // Contact
+  writer.drawLine({ text: cv.name || "Your Name", font: fonts.bold, size: 18, align: "center", gapAfter: 6 });
   if (cv.contact) {
-    writer.drawLine({
-      text: cv.contact,
-      font: fonts.regular,
-      size: 10,
-      color: GRAY,
-      align: "center",
-      gapAfter: 16,
-    });
+    writer.drawLine({ text: cv.contact, font: fonts.regular, size: 10, color: GRAY, align: "center", gapAfter: 16 });
   }
 
-  // Summary
   if (cv.summary) {
-    writer.drawSectionHeading("Professional Summary");
-    writer.drawWrapped({ text: cv.summary, size: 11, gapAfter: 10 });
+    writer.drawSectionHeading("Profile");
+    writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10 });
   }
 
-  // Experience
+  const drawRoleBlock = (entry) => {
+    writer.drawRoleHeader(entry.company, entry.dates);
+    if (entry.title) {
+      writer.drawLine({ text: entry.title, font: fonts.italic, size: 11, gapAfter: 6 });
+    }
+    (entry.bullets || []).forEach((b) => writer.drawMixedBullet(b, 11));
+    if (entry.link) {
+      writer.drawLine({ text: `Live demo: ${entry.link}`, font: fonts.regular, size: 9, color: LINK_COLOR, gapAfter: 4 });
+    }
+    writer.y -= 6;
+  };
+
   if (cv.experience && cv.experience.length > 0) {
     writer.drawSectionHeading("Work Experience");
-    cv.experience.forEach((job) => {
-      const titleLine = [job.title, job.company].filter(Boolean).join("  |  ");
-      if (titleLine) {
-        writer.drawLine({ text: titleLine, font: fonts.bold, size: 12, gapAfter: 2 });
-      }
-      if (job.dates) {
-        writer.drawLine({ text: job.dates, font: fonts.italic, size: 10, color: GRAY, gapAfter: 6 });
-      }
-      (job.bullets || []).forEach((bullet) => {
-        writer.drawBullet(bullet, fonts.regular, 11);
-      });
-      writer.y -= 6;
-    });
+    cv.experience.forEach(drawRoleBlock);
   }
 
-  // Projects
   if (cv.projects && cv.projects.length > 0) {
     writer.drawSectionHeading("Projects");
-    cv.projects.forEach((proj) => {
-      const titleLine = [proj.title, proj.company].filter(Boolean).join("  |  ");
-      if (titleLine) {
-        writer.drawLine({ text: titleLine, font: fonts.bold, size: 12, gapAfter: 2 });
-      }
-      if (proj.dates) {
-        writer.drawLine({ text: proj.dates, font: fonts.italic, size: 10, color: GRAY, gapAfter: 6 });
-      }
-      (proj.bullets || []).forEach((bullet) => {
-        writer.drawBullet(bullet, fonts.regular, 11);
-      });
-      if (proj.link) {
-        writer.drawWrapped({
-          text: `Live demo: ${proj.link}`,
-          font: fonts.regular,
-          size: 10,
-          color: rgb(0.1, 0.2, 0.6),
-          gapAfter: 4,
-        });
-      }
-      writer.y -= 6;
-    });
+    cv.projects.forEach(drawRoleBlock);
   }
 
-  // Education
   if (cv.education && cv.education.length > 0) {
     writer.drawSectionHeading("Education");
-    cv.education.forEach((edu) => {
-      const line = [edu.degree, edu.institution].filter(Boolean).join("  |  ");
-      if (line) {
-        writer.drawLine({ text: line, font: fonts.bold, size: 12, gapAfter: 2 });
-      }
-      if (edu.dates) {
-        writer.drawLine({ text: edu.dates, font: fonts.italic, size: 10, color: GRAY, gapAfter: 8 });
-      }
-    });
+    cv.education.forEach((edu) =>
+      drawRoleBlock({ company: edu.institution, dates: edu.dates, title: edu.degree, bullets: [] })
+    );
   }
 
-  // Skills
   if (cv.skills && cv.skills.length > 0) {
     writer.drawSectionHeading("Skills");
-    writer.drawWrapped({ text: cv.skills.join("   •   "), size: 11, gapAfter: 6 });
+    writer.drawMixedWrapped({ text: "-  " + cv.skills.join("  -  "), size: 11, gapAfter: 6 });
   }
 
-  // Certifications
   if (cv.certifications && cv.certifications.length > 0) {
     writer.drawSectionHeading("Certifications");
-    cv.certifications.forEach((cert) => {
-      writer.drawBullet(cert, fonts.regular, 11);
-    });
+    cv.certifications.forEach((cert) => writer.drawMixedBullet(cert, 11));
     writer.y -= 4;
   }
 
-  // Interests
   if (cv.interests) {
     writer.drawSectionHeading("Interests");
-    writer.drawWrapped({ text: cv.interests, size: 11, gapAfter: 6 });
+    writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6 });
   }
 
   return pdfDoc.save();

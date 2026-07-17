@@ -12,6 +12,12 @@ const missingSkillsList = document.getElementById("missing-skills-list");
 const noMissingSkillsMsg = document.getElementById("no-missing-skills-msg");
 const downloadDocxBtn = document.getElementById("download-docx-btn");
 const downloadPdfBtn = document.getElementById("download-pdf-btn");
+const cvFileInput = document.getElementById("cv-file-input");
+const uploadStatus = document.getElementById("upload-status");
+const addSkillsBtn = document.getElementById("add-skills-btn");
+const skillsReviewSection = document.getElementById("skills-review-section");
+const currentSkillsList = document.getElementById("current-skills-list");
+const removeSkillsBtn = document.getElementById("remove-skills-btn");
 
 const authSection = document.getElementById("auth-section");
 const appSection = document.getElementById("app-section");
@@ -218,13 +224,23 @@ function renderAnalysis(changes, missingSkills) {
   if (hasMissingSkills) {
     noMissingSkillsMsg.classList.add("hidden");
     missingSkillsList.classList.remove("hidden");
+    addSkillsBtn.classList.remove("hidden");
     missingSkills.forEach((skill) => {
       const li = document.createElement("li");
-      li.textContent = skill;
+      const label = document.createElement("label");
+      label.className = "skill-checkbox-label";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = skill;
+      checkbox.className = "missing-skill-checkbox";
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(" " + skill));
+      li.appendChild(label);
       missingSkillsList.appendChild(li);
     });
   } else {
     missingSkillsList.classList.add("hidden");
+    addSkillsBtn.classList.add("hidden");
     noMissingSkillsMsg.classList.remove("hidden");
   }
 }
@@ -236,7 +252,7 @@ function renderTailoredCv(cv) {
   if (cv.contact) parts.push(`<div class="cv-contact">${escapeHtml(cv.contact)}</div>`);
 
   if (cv.summary) {
-    parts.push(`<h3>Professional Summary</h3><p>${escapeHtml(cv.summary)}</p>`);
+    parts.push(`<h3>Professional Summary</h3><p>${renderBoldText(cv.summary)}</p>`);
   }
 
   if (cv.experience && cv.experience.length > 0) {
@@ -248,7 +264,7 @@ function renderTailoredCv(cv) {
       parts.push("</p>");
       if (job.bullets && job.bullets.length > 0) {
         parts.push("<ul>");
-        job.bullets.forEach((b) => parts.push(`<li>${escapeHtml(b)}</li>`));
+        job.bullets.forEach((b) => parts.push(`<li>${renderBoldText(b)}</li>`));
         parts.push("</ul>");
       }
     });
@@ -263,7 +279,7 @@ function renderTailoredCv(cv) {
       parts.push("</p>");
       if (proj.bullets && proj.bullets.length > 0) {
         parts.push("<ul>");
-        proj.bullets.forEach((b) => parts.push(`<li>${escapeHtml(b)}</li>`));
+        proj.bullets.forEach((b) => parts.push(`<li>${renderBoldText(b)}</li>`));
         if (proj.link) {
           parts.push(
             `<li>Live demo: <a href="${escapeHtml(proj.link)}" target="_blank" rel="noopener">${escapeHtml(proj.link)}</a></li>`
@@ -309,10 +325,146 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Mirrors api/_lib/boldSegments.js - parses **bold** markers so the browser
+// preview shows the same recruiter-facing emphasis as the DOCX/PDF downloads.
+function renderBoldText(text) {
+  if (!text) return "";
+  const segments = [];
+  const regex = /\*\*([\s\S]*?)\*\*/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) segments.push({ text: text.slice(lastIndex, match.index), bold: false });
+    segments.push({ text: match[1], bold: true });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), bold: false });
+  if (segments.length === 0) segments.push({ text, bold: false });
+
+  return segments
+    .map((seg) => (seg.bold ? `<strong class="hl-term">${escapeHtml(seg.text)}</strong>` : escapeHtml(seg.text)))
+    .join("");
+}
+
 function setStatus(message, isError) {
   statusMsg.textContent = message;
   statusMsg.classList.toggle("error", Boolean(isError));
 }
+
+function renderSkillsReview() {
+  if (!currentTailoredCv || !currentTailoredCv.skills || currentTailoredCv.skills.length === 0) {
+    skillsReviewSection.classList.add("hidden");
+    return;
+  }
+  skillsReviewSection.classList.remove("hidden");
+  currentSkillsList.innerHTML = "";
+  currentTailoredCv.skills.forEach((skill) => {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "skill-checkbox-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = skill;
+    checkbox.className = "current-skill-checkbox";
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(" " + skill));
+    li.appendChild(label);
+    currentSkillsList.appendChild(li);
+  });
+}
+
+addSkillsBtn.addEventListener("click", () => {
+  const checked = Array.from(document.querySelectorAll(".missing-skill-checkbox:checked")).map((c) => c.value);
+  if (checked.length === 0) {
+    setStatus("Select at least one skill to add first.", true);
+    return;
+  }
+  if (!currentTailoredCv.skills) currentTailoredCv.skills = [];
+  checked.forEach((skill) => {
+    if (!currentTailoredCv.skills.includes(skill)) currentTailoredCv.skills.push(skill);
+  });
+
+  // Remove added skills from the missing-skills list so they can't be re-added.
+  const remainingMissing = Array.from(missingSkillsList.querySelectorAll("li"))
+    .filter((li) => !checked.includes(li.querySelector("input").value));
+  missingSkillsList.innerHTML = "";
+  remainingMissing.forEach((li) => missingSkillsList.appendChild(li));
+  if (remainingMissing.length === 0) {
+    missingSkillsList.classList.add("hidden");
+    addSkillsBtn.classList.add("hidden");
+    noMissingSkillsMsg.classList.remove("hidden");
+    noMissingSkillsMsg.textContent = "All suggested skills added.";
+  }
+
+  renderTailoredCv(currentTailoredCv);
+  renderSkillsReview();
+  setStatus(`Added ${checked.length} skill(s) to your CV.`);
+});
+
+removeSkillsBtn.addEventListener("click", () => {
+  const checked = Array.from(document.querySelectorAll(".current-skill-checkbox:checked")).map((c) => c.value);
+  if (checked.length === 0) {
+    setStatus("Select at least one skill to remove first.", true);
+    return;
+  }
+  const confirmed = window.confirm(
+    `Remove ${checked.length} skill(s) from your CV?\n\n${checked.join(", ")}`
+  );
+  if (!confirmed) return;
+
+  currentTailoredCv.skills = currentTailoredCv.skills.filter((s) => !checked.includes(s));
+  renderTailoredCv(currentTailoredCv);
+  renderSkillsReview();
+  setStatus(`Removed ${checked.length} skill(s) from your CV.`);
+});
+
+// --- CV file upload ------------------------------------------------------
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const base64 = result.split(",")[1] || "";
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error("Could not read the file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+cvFileInput.addEventListener("change", async () => {
+  const file = cvFileInput.files[0];
+  if (!file) return;
+
+  uploadStatus.textContent = "Reading file…";
+  uploadStatus.classList.remove("error");
+
+  try {
+    const base64Data = await readFileAsBase64(file);
+    const response = await authedFetch("/api/extract-cv-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, mimeType: file.type, base64Data }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      uploadStatus.textContent = data.error || "Could not read that file.";
+      uploadStatus.classList.add("error");
+      return;
+    }
+
+    cvInput.value = data.text;
+    uploadStatus.textContent = `Loaded "${file.name}"`;
+  } catch (err) {
+    console.error(err);
+    uploadStatus.textContent = "Failed to read that file. Please try again or paste your CV text directly.";
+    uploadStatus.classList.add("error");
+  } finally {
+    cvFileInput.value = ""; // allow re-uploading the same file name later
+  }
+});
 
 // --- main tailor action -----------------------------------------------------
 
@@ -349,6 +501,7 @@ tailorBtn.addEventListener("click", async () => {
     currentTailoredCv = data.tailoredCv;
     renderTailoredCv(currentTailoredCv);
     renderAnalysis(data.changes, data.missingSkills);
+    renderSkillsReview();
     resultSection.classList.remove("hidden");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
     setStatus("Done! Review the tailored CV below.");
