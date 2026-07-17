@@ -3,13 +3,13 @@
   "version": "1.0.0",
   "description": "Tailor a CV to a job description using Claude, then download as DOCX or PDF.",
   "private": true,
-"scripts": {
-},
+  "scripts": {},
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "@vercel/analytics": "^2.0.1",
     "docx": "^9.1.0",
     "pdf-lib": "^1.17.1",
-    "@supabase/supabase-js": "^2.45.4",
-     "stripe": "^17.4.0"
+    "stripe": "^17.4.0"
   },
   "engines": {
     "node": ">=18"
