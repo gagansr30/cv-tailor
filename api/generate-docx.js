@@ -19,6 +19,13 @@ const BODY_SIZE = 23; // 11.5pt, half-points
 const NAME_SIZE = 26; // 13pt
 const DATE_TAB_POSITION = 9350; // right tab stop for dates, twips
 
+// Trims a regex-matched URL and strips trailing punctuation the match may
+// have accidentally swept up (e.g. a comma or period right after a link).
+function normalizeUrl(url) {
+  if (!url) return "";
+  return String(url).trim().replace(/[.,;:]+$/, "");
+}
+
 function textRunsFromSegments(text, extraProps = {}) {
   return parseBoldSegments(text).map(
     (seg) =>
@@ -107,17 +114,18 @@ function buildDocument(cv) {
   // Contact
   if (cv.contact || Array.isArray(cv.contactLinks)) {
     const contactLineRuns = [];
-    const contactParagraphs = [];
 
     const normalizeString = (value) => String(value || "").trim();
     const contactText = normalizeString(cv.contact);
     const emails = contactText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
     const phones = contactText.match(/\+?\d[\d\s().-]{6,}\d/g) || [];
-    const urls = (contactText.match(/(?:https?:\/\/|www\.)[^\s,;]+|linkedin\.com\/[^
-\s,;]+|github\.com\/[^
-\s,;]+/gi) || []).map(normalizeUrl);
+    const urls = (
+      contactText.match(/(?:https?:\/\/|www\.)[^\s,;]+|linkedin\.com\/[^\s,;]+|github\.com\/[^\s,;]+/gi) || []
+    ).map(normalizeUrl);
     const location = contactText
       .replace(/(?:https?:\/\/|www\.)[^\s,;]+/gi, "")
+      .replace(/linkedin\.com\/[^\s,;]+/gi, "")
+      .replace(/github\.com\/[^\s,;]+/gi, "")
       .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "")
       .replace(/\+?\d[\d\s().-]{6,}\d/g, "")
       .replace(/[|,\-]+/g, " ")

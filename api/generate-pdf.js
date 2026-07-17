@@ -3,8 +3,10 @@
 // matching the same template style as generate-docx.js: centered plain
 // headings, tab-aligned dates, italic titles, hyphen bullets, and inline
 // **bold** keyword emphasis (rendered as mixed bold/regular text runs).
+// Links (LinkedIn/GitHub in the header, and project demo links) are real
+// clickable PDF annotations, not just styled text.
 
-const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+const { PDFDocument, StandardFonts, rgb, PDFString, PDFName } = require("pdf-lib");
 const { parseBoldSegments } = require("./_lib/boldSegments");
 
 const PAGE_WIDTH = 612;
@@ -15,18 +17,61 @@ const BLACK = rgb(0.1, 0.1, 0.1);
 const GRAY = rgb(0.4, 0.4, 0.4);
 const LINK_COLOR = rgb(0.1, 0.2, 0.6);
 
-// Splits bold-segment text into a flat list of "words" tagged with bold state,
-// preserving the single space between words (spaces attach to the word before them).
 function segmentsToWords(segments) {
   const words = [];
   segments.forEach((seg) => {
     const parts = seg.text.split(" ");
     parts.forEach((part, i) => {
-      if (part === "" && i === parts.length - 1) return; // trailing split artifact
+      if (part === "" && i === parts.length - 1) return;
       words.push({ text: part + (i < parts.length - 1 ? " " : ""), bold: seg.bold });
     });
   });
   return words.filter((w) => w.text.length > 0);
+}
+
+// Splits a "contact" string (e.g. "email | phone | location | linkedin url | github url")
+// into an info line (email/phone/location) and an array of link URLs, so links can be
+// rendered as individually clickable regions on their own centered line.
+function splitContactParts(contact) {
+  if (!contact) return { infoLine: "", linkParts: [] };
+  const parts = contact.split("|").map((p) => p.trim()).filter(Boolean);
+  const isLink = (p) => /^https?:\/\//i.test(p) || /linkedin\.com|github\.com/i.test(p);
+  const infoParts = parts.filter((p) => !isLink(p));
+  const linkParts = parts.filter(isLink);
+  return { infoLine: infoParts.join("  |  "), linkParts };
+}
+
+// pdf-lib has no high-level "clickable link" API, so link annotations are
+// built manually: a Link annotation dict with a URI action, registered on
+// the page's /Annots array, positioned over the drawn text's bounding box.
+// PDF viewers treat a URI without a scheme (e.g. "linkedin.com/in/x") as a
+// relative local file path, not a website - this normalizes the actual link
+// destination while leaving the displayed text exactly as written.
+function ensureUrlScheme(url) {
+  if (!url) return url;
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function addLinkAnnotation(page, url, x, y, width, height) {
+  const doc = page.doc;
+  const linkAnnotation = doc.context.obj({
+    Type: "Annot",
+    Subtype: "Link",
+    Rect: [x, y, x + width, y + height],
+    Border: [0, 0, 0],
+    A: {
+      Type: "Action",
+      S: "URI",
+      URI: PDFString.of(ensureUrlScheme(url)),
+    },
+  });
+  const linkRef = doc.context.register(linkAnnotation);
+  const existingAnnots = page.node.lookup(PDFName.of("Annots"));
+  if (existingAnnots) {
+    existingAnnots.push(linkRef);
+  } else {
+    page.node.set(PDFName.of("Annots"), doc.context.obj([linkRef]));
+  }
 }
 
 class PdfWriter {
@@ -44,23 +89,50 @@ class PdfWriter {
     }
   }
 
-  drawLine({ text, font = this.fonts.regular, size = 11, color = BLACK, gapAfter = 4, align = "left" }) {
+  drawLine({ text, font = this.fonts.regular, size = 11, color = BLACK, gapAfter = 4, align = "left", url = null }) {
     this.ensureSpace(size + gapAfter);
     let x = MARGIN;
+    const textWidth = font.widthOfTextAtSize(text, size);
     if (align === "center") {
-      const textWidth = font.widthOfTextAtSize(text, size);
       x = (PAGE_WIDTH - textWidth) / 2;
     }
-    this.page.drawText(text, { x, y: this.y - size, size, font, color });
+    const yBaseline = this.y - size;
+    this.page.drawText(text, { x, y: yBaseline, size, font, color });
+    if (url) {
+      addLinkAnnotation(this.page, url, x, yBaseline - 2, textWidth, size + 4);
+    }
     this.y -= size + gapAfter;
   }
 
-  // Draws text with inline **bold** support, wrapped, left-aligned, optionally centered as a whole block.
+  // Draws multiple centered parts on one line, separated by " | ", where each
+  // part can optionally have its own clickable URL (used for the header's
+  // LinkedIn / GitHub line, since each needs a separate link target).
+  drawCenteredLinkParts({ parts, font, size = 10, color = LINK_COLOR, gapAfter = 16 }) {
+    if (!parts || parts.length === 0) return;
+    this.ensureSpace(size + gapAfter);
+    const separator = "  |  ";
+    const sepWidth = font.widthOfTextAtSize(separator, size);
+    const widths = parts.map((p) => font.widthOfTextAtSize(p, size));
+    const totalWidth = widths.reduce((a, b) => a + b, 0) + sepWidth * (parts.length - 1);
+    let x = (PAGE_WIDTH - totalWidth) / 2;
+    const yBaseline = this.y - size;
+
+    parts.forEach((part, i) => {
+      this.page.drawText(part, { x, y: yBaseline, size, font, color });
+      addLinkAnnotation(this.page, part, x, yBaseline - 2, widths[i], size + 4);
+      x += widths[i];
+      if (i < parts.length - 1) {
+        this.page.drawText(separator, { x, y: yBaseline, size, font, color: GRAY });
+        x += sepWidth;
+      }
+    });
+    this.y -= size + gapAfter;
+  }
+
   drawMixedWrapped({ text, size = 11, gapAfter = 8, lineGap = 3, indent = 0, center = false, justify = false }) {
     const words = segmentsToWords(parseBoldSegments(text));
     const maxWidth = CONTENT_WIDTH - indent;
 
-    // Greedy line wrap, measuring each word with its correct font.
     const lines = [];
     let currentLine = [];
     let currentWidth = 0;
@@ -105,6 +177,35 @@ class PdfWriter {
       this.y -= size + lineGap;
     });
     this.y -= gapAfter;
+  }
+
+  // Wraps plain (single-font) text - used for role/degree titles, which can
+  // run long (e.g. degree name + module list) and must not run off the page.
+  drawWrappedPlain({ text, font = this.fonts.regular, size = 11, color = BLACK, gapAfter = 6, lineGap = 3 }) {
+    const words = text.split(" ").filter(Boolean);
+    const lines = [];
+    let currentLine = [];
+    let currentWidth = 0;
+
+    words.forEach((word) => {
+      const wordWithSpace = word + " ";
+      const wWidth = font.widthOfTextAtSize(wordWithSpace, size);
+      if (currentWidth + wWidth > CONTENT_WIDTH && currentLine.length > 0) {
+        lines.push(currentLine.join(" "));
+        currentLine = [];
+        currentWidth = 0;
+      }
+      currentLine.push(word);
+      currentWidth += wWidth;
+    });
+    if (currentLine.length > 0) lines.push(currentLine.join(" "));
+
+    lines.forEach((line) => {
+      this.ensureSpace(size + lineGap);
+      this.page.drawText(line, { x: MARGIN, y: this.y - size, size, font, color });
+      this.y -= size + lineGap;
+    });
+    this.y -= gapAfter - lineGap;
   }
 
   drawSectionHeading(text) {
@@ -185,7 +286,15 @@ async function buildPdf(cv) {
 
   writer.drawLine({ text: cv.name || "Your Name", font: fonts.bold, size: 18, align: "center", gapAfter: 6 });
   if (cv.contact) {
-    writer.drawLine({ text: cv.contact, font: fonts.regular, size: 10, color: GRAY, align: "center", gapAfter: 16 });
+    const { infoLine, linkParts } = splitContactParts(cv.contact);
+    if (infoLine) {
+      writer.drawLine({ text: infoLine, font: fonts.regular, size: 10, color: GRAY, align: "center", gapAfter: 2 });
+    }
+    if (linkParts.length > 0) {
+      writer.drawCenteredLinkParts({ parts: linkParts, font: fonts.regular, size: 10, gapAfter: 16 });
+    } else if (infoLine) {
+      writer.y -= 14;
+    }
   }
 
   if (cv.summary) {
@@ -196,11 +305,18 @@ async function buildPdf(cv) {
   const drawRoleBlock = (entry) => {
     writer.drawRoleHeader(entry.company, entry.dates);
     if (entry.title) {
-      writer.drawLine({ text: entry.title, font: fonts.italic, size: 11, gapAfter: 6 });
+      writer.drawWrappedPlain({ text: entry.title, font: fonts.italic, size: 11, gapAfter: 6 });
     }
     (entry.bullets || []).forEach((b) => writer.drawMixedBullet(b, 11));
     if (entry.link) {
-      writer.drawLine({ text: `Live demo: ${entry.link}`, font: fonts.regular, size: 9, color: LINK_COLOR, gapAfter: 4 });
+      writer.drawLine({
+        text: `Live demo: ${entry.link}`,
+        font: fonts.regular,
+        size: 9,
+        color: LINK_COLOR,
+        gapAfter: 4,
+        url: entry.link,
+      });
     }
     writer.y -= 6;
   };
@@ -224,7 +340,7 @@ async function buildPdf(cv) {
 
   if (cv.skills && cv.skills.length > 0) {
     writer.drawSectionHeading("Skills");
-    writer.drawMixedWrapped({ text: "•  " + cv.skills.join("  •  "), size: 11, gapAfter: 6, justify: true });
+    writer.drawMixedWrapped({ text: cv.skills.join(", "), size: 11, gapAfter: 6, justify: true });
   }
 
   if (cv.certifications && cv.certifications.length > 0) {

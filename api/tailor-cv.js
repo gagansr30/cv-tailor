@@ -70,7 +70,7 @@ matching exactly this shape:
 {
   "tailoredCv": {
     "name": "string, candidate's full name",
-    "contact": "string, contact info line (email / phone / location / links), best-effort from original CV",
+    "contact": "string, a single pipe-separated line: email | phone | location | link | link. Copy each value EXACTLY as it appears in the original CV (same URL format - do not add or remove https:// or www. compared to the original). Include each contact method and each link (e.g. LinkedIn, GitHub) exactly ONCE - never repeat the same link in a different format (e.g. never include both 'linkedin.com/in/x' and 'https://linkedin.com/in/x' for the same profile).",
     "summary": "string, 2-4 sentence tailored professional summary, with 3-6 key terms wrapped in **bold**",
     "experience": [
       {
@@ -131,6 +131,33 @@ function stripBracketedNotes(text) {
     .trim();
 }
 
+// Cleans up the AI-generated contact line: removes duplicate contact methods
+// or links that were included more than once in different formats (e.g. a
+// bare domain and the same URL again with https:// or www.).
+function dedupeContactLine(contact) {
+  if (!contact) return "";
+  const parts = contact.split("|").map((p) => p.trim()).filter(Boolean);
+
+  const normalize = (p) =>
+    p
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/$/, "");
+
+  const seen = new Set();
+  const deduped = [];
+  parts.forEach((part) => {
+    const key = normalize(part);
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(part);
+    }
+  });
+
+  return deduped.join(" | ");
+}
+
 function normalizeBulletText(item) {
   if (typeof item !== "string" || !item.trim()) return [];
   const lines = item.replace(/\r\n/g, "\n").split("\n");
@@ -159,7 +186,7 @@ function sanitizeTailoredCv(cv) {
   const sanitizeString = (value) => stripBracketedNotes(String(value || ""));
 
   cv.name = sanitizeString(cv.name);
-  cv.contact = sanitizeString(cv.contact);
+  cv.contact = dedupeContactLine(sanitizeString(cv.contact));
   cv.summary = sanitizeString(cv.summary);
 
   if (Array.isArray(cv.experience)) {
@@ -363,7 +390,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
 
     // Basic shape defaults so downstream rendering never crashes.
     tailoredCv.name = tailoredCv.name || "";
-    tailoredCv.contact = tailoredCv.contact || "";
+    tailoredCv.contact = dedupeContactLine(tailoredCv.contact || "");
     tailoredCv.summary = tailoredCv.summary || "";
     tailoredCv.experience = Array.isArray(tailoredCv.experience)
       ? tailoredCv.experience
