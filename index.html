@@ -31,14 +31,14 @@
           <button id="tab-signup" class="auth-tab" type="button">Sign up</button>
         </div>
 
-        <form id="auth-form" class="auth-form">
+        <form id="auth-form" class="auth-form" method="post" action="#">
           <label for="auth-email">Email</label>
-          <input type="email" id="auth-email" required autocomplete="email" />
+          <input type="email" id="auth-email" name="email" required autocomplete="email" />
 
           <label for="auth-password">Password</label>
-          <input type="password" id="auth-password" required autocomplete="current-password" minlength="6" />
+          <input type="password" id="auth-password" name="password" required autocomplete="current-password" minlength="6" />
 
-          <button type="submit" id="auth-submit-btn" class="btn btn-primary">Log in</button>
+          <button type="button" id="auth-submit-btn" class="btn btn-primary">Log in</button>
           <p id="auth-msg" class="status-msg" aria-live="polite"></p>
         </form>
         <p class="auth-note">Free: 3 tailored CVs. Subscribe for up to 100 per month.</p>

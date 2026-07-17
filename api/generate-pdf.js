@@ -56,7 +56,7 @@ class PdfWriter {
   }
 
   // Draws text with inline **bold** support, wrapped, left-aligned, optionally centered as a whole block.
-  drawMixedWrapped({ text, size = 11, gapAfter = 8, lineGap = 3, indent = 0, center = false }) {
+  drawMixedWrapped({ text, size = 11, gapAfter = 8, lineGap = 3, indent = 0, center = false, justify = false }) {
     const words = segmentsToWords(parseBoldSegments(text));
     const maxWidth = CONTENT_WIDTH - indent;
 
@@ -77,18 +77,30 @@ class PdfWriter {
     });
     if (currentLine.length > 0) lines.push(currentLine);
 
-    lines.forEach((line) => {
+    lines.forEach((line, index) => {
       this.ensureSpace(size + lineGap);
       let lineWidth = 0;
+      let spaceCount = 0;
       line.forEach((w) => {
         const font = w.bold ? this.fonts.bold : this.fonts.regular;
         lineWidth += font.widthOfTextAtSize(w.text, size);
+        if (w.text.endsWith(" ")) {
+          spaceCount += 1;
+        }
       });
+
+      const isLastLine = index === lines.length - 1;
+      const extraSpace = justify && !center && !isLastLine && spaceCount > 0 ? (maxWidth - lineWidth) / spaceCount : 0;
       let x = center ? MARGIN + indent + (maxWidth - lineWidth) / 2 : MARGIN + indent;
+
       line.forEach((w) => {
         const font = w.bold ? this.fonts.bold : this.fonts.regular;
         this.page.drawText(w.text, { x, y: this.y - size, size, font, color: BLACK });
-        x += font.widthOfTextAtSize(w.text, size);
+        const wordWidth = font.widthOfTextAtSize(w.text, size);
+        x += wordWidth;
+        if (extraSpace > 0 && w.text.endsWith(" ")) {
+          x += extraSpace;
+        }
       });
       this.y -= size + lineGap;
     });
@@ -147,7 +159,7 @@ class PdfWriter {
     lines.forEach((line, i) => {
       this.ensureSpace(size + 4);
       if (i === 0) {
-        this.page.drawText("-", { x: MARGIN, y: this.y - size, size, font: this.fonts.regular, color: BLACK });
+        this.page.drawText("•", { x: MARGIN, y: this.y - size, size, font: this.fonts.regular, color: BLACK });
       }
       let x = MARGIN + bulletIndent;
       line.forEach((w) => {
@@ -178,7 +190,7 @@ async function buildPdf(cv) {
 
   if (cv.summary) {
     writer.drawSectionHeading("Profile");
-    writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10 });
+    writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10, justify: true });
   }
 
   const drawRoleBlock = (entry) => {
@@ -212,7 +224,7 @@ async function buildPdf(cv) {
 
   if (cv.skills && cv.skills.length > 0) {
     writer.drawSectionHeading("Skills");
-    writer.drawMixedWrapped({ text: "-  " + cv.skills.join("  -  "), size: 11, gapAfter: 6 });
+    writer.drawMixedWrapped({ text: "•  " + cv.skills.join("  •  "), size: 11, gapAfter: 6, justify: true });
   }
 
   if (cv.certifications && cv.certifications.length > 0) {
@@ -223,7 +235,7 @@ async function buildPdf(cv) {
 
   if (cv.interests) {
     writer.drawSectionHeading("Interests");
-    writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6 });
+    writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6, justify: true });
   }
 
   return pdfDoc.save();

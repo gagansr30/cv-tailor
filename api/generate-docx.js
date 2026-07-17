@@ -105,14 +105,78 @@ function buildDocument(cv) {
   );
 
   // Contact
-  if (cv.contact) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: cv.contact, size: BODY_SIZE, font: FONT })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
-      })
-    );
+  if (cv.contact || Array.isArray(cv.contactLinks)) {
+    const contactLineRuns = [];
+    const contactParagraphs = [];
+
+    const normalizeString = (value) => String(value || "").trim();
+    const contactText = normalizeString(cv.contact);
+    const emails = contactText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+    const phones = contactText.match(/\+?\d[\d\s().-]{6,}\d/g) || [];
+    const urls = (contactText.match(/(?:https?:\/\/|www\.)[^\s,;]+|linkedin\.com\/[^
+\s,;]+|github\.com\/[^
+\s,;]+/gi) || []).map(normalizeUrl);
+    const location = contactText
+      .replace(/(?:https?:\/\/|www\.)[^\s,;]+/gi, "")
+      .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "")
+      .replace(/\+?\d[\d\s().-]{6,}\d/g, "")
+      .replace(/[|,\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (emails[0]) {
+      contactLineRuns.push(
+        new ExternalHyperlink({
+          link: `mailto:${emails[0]}`,
+          children: [new TextRun({ text: emails[0], size: BODY_SIZE, font: FONT, style: "Hyperlink" })],
+        })
+      );
+    }
+    if (phones[0]) {
+      if (contactLineRuns.length > 0) contactLineRuns.push(new TextRun({ text: " | ", size: BODY_SIZE, font: FONT }));
+      contactLineRuns.push(new TextRun({ text: phones[0], size: BODY_SIZE, font: FONT }));
+    }
+    if (location) {
+      if (contactLineRuns.length > 0) contactLineRuns.push(new TextRun({ text: " | ", size: BODY_SIZE, font: FONT }));
+      contactLineRuns.push(new TextRun({ text: location, size: BODY_SIZE, font: FONT }));
+    }
+
+    if (contactLineRuns.length > 0) {
+      children.push(
+        new Paragraph({
+          children: contactLineRuns,
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 40 },
+        })
+      );
+    }
+
+    const allLinks = new Set(urls);
+    if (Array.isArray(cv.contactLinks)) {
+      cv.contactLinks.forEach((url) => {
+        const normalized = normalizeUrl(url);
+        if (normalized) allLinks.add(normalized);
+      });
+    }
+    if (allLinks.size > 0) {
+      const linkRuns = [];
+      Array.from(allLinks).forEach((url, index) => {
+        if (index > 0) linkRuns.push(new TextRun({ text: " | ", size: BODY_SIZE, font: FONT }));
+        linkRuns.push(
+          new ExternalHyperlink({
+            link: url,
+            children: [new TextRun({ text: url, size: BODY_SIZE, font: FONT, style: "Hyperlink" })],
+          })
+        );
+      });
+      children.push(
+        new Paragraph({
+          children: linkRuns,
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 200 },
+        })
+      );
+    }
   }
 
   // Professional Summary
@@ -122,6 +186,7 @@ function buildDocument(cv) {
       new Paragraph({
         children: textRunsFromSegments(cv.summary),
         spacing: { after: 160 },
+        alignment: AlignmentType.JUSTIFIED,
       })
     );
   }
@@ -165,6 +230,7 @@ function buildDocument(cv) {
       new Paragraph({
         children: [new TextRun({ text: "•  " + cv.skills.join("  •  "), size: BODY_SIZE, font: FONT })],
         spacing: { after: 100 },
+        alignment: AlignmentType.JUSTIFIED,
       })
     );
   }
@@ -182,6 +248,7 @@ function buildDocument(cv) {
       new Paragraph({
         children: [new TextRun({ text: cv.interests, size: BODY_SIZE, font: FONT })],
         spacing: { after: 100 },
+        alignment: AlignmentType.JUSTIFIED,
       })
     );
   }
