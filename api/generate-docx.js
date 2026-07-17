@@ -9,6 +9,7 @@ const {
   HeadingLevel,
   AlignmentType,
   BorderStyle,
+  ExternalHyperlink,
 } = require("docx");
 
 const FONT = "Calibri";
@@ -131,6 +132,67 @@ function buildDocument(cv) {
     });
   }
 
+  // Projects
+  if (cv.projects && cv.projects.length > 0) {
+    children.push(sectionHeading("Projects"));
+    cv.projects.forEach((proj) => {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: proj.title || "",
+              bold: true,
+              size: 22,
+              font: FONT,
+            }),
+            new TextRun({
+              text: proj.company ? `  |  ${proj.company}` : "",
+              italics: true,
+              size: 22,
+              font: FONT,
+            }),
+          ],
+          spacing: { before: 120, after: 20 },
+        })
+      );
+      if (proj.dates) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: proj.dates,
+                size: 20,
+                color: "666666",
+                font: FONT,
+              }),
+            ],
+            spacing: { after: 60 },
+          })
+        );
+      }
+      (proj.bullets || []).forEach((bullet) => {
+        children.push(bulletParagraph(bullet));
+      });
+      if (proj.link) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({ text: "Live demo: ", font: FONT, size: 22 }),
+              new ExternalHyperlink({
+                link: proj.link,
+                children: [
+                  new TextRun({ text: proj.link, font: FONT, size: 22, style: "Hyperlink" }),
+                ],
+              }),
+            ],
+            bullet: { level: 0 },
+            spacing: { after: 80 },
+          })
+        );
+      }
+    });
+  }
+
   // Education
   if (cv.education && cv.education.length > 0) {
     children.push(sectionHeading("Education"));
@@ -184,6 +246,25 @@ function buildDocument(cv) {
             font: FONT,
           }),
         ],
+        spacing: { after: 100 },
+      })
+    );
+  }
+
+  // Certifications
+  if (cv.certifications && cv.certifications.length > 0) {
+    children.push(sectionHeading("Certifications"));
+    cv.certifications.forEach((cert) => {
+      children.push(bulletParagraph(cert));
+    });
+  }
+
+  // Interests
+  if (cv.interests) {
+    children.push(sectionHeading("Interests"));
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: cv.interests, size: 22, font: FONT })],
         spacing: { after: 100 },
       })
     );

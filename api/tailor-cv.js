@@ -2,58 +2,18 @@
 // Accepts { cv, jobDescription } and returns a tailored, structured CV as JSON.
 // Calls the Anthropic Claude API server-side. The API key is read from the
 // CLAUDE_API_KEY environment variable and is never sent to the frontend.
-// Requires a logged-in Supabase user and enforces free/subscriber usage limits.
-
-require("./_lib/loadEnv");
-const fs = require("fs");
-const path = require("path");
-
-function loadLocalEnv() {
-  const localEnvPath = path.join(__dirname, "..", ".env.local");
-  const envPath = path.join(__dirname, "..", ".env");
-  const filePath = fs.existsSync(localEnvPath) ? localEnvPath : envPath;
-
-  if (!filePath || !fs.existsSync(filePath)) {
-    return;
-  }
-
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const equalsIndex = trimmed.indexOf("=");
-    if (equalsIndex === -1) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, equalsIndex).trim();
-    let value = trimmed.slice(equalsIndex + 1).trim();
-
-    if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
-  }
-}
-
-loadLocalEnv();
+// Requires a logged-in Supabase user and enforces the free-tier usage limit.
 
 const { getAuthedUser } = require("./_lib/auth");
 const { getSupabaseAdmin } = require("./_lib/supabaseAdmin");
 const { FREE_LIFETIME_LIMIT, MONTHLY_SUBSCRIBER_LIMIT } = require("./_lib/constants");
 
 // --- very simple in-memory rate limiter -------------------------------
-const requestLog = new Map();
-const WINDOW_MS = 60 * 1000;
+// This resets whenever the serverless function cold-starts, so it is NOT a
+// robust production rate limiter, just a basic speed bump until payments /
+// a real rate-limiting service (e.g. Upstash Redis) are added.
+const requestLog = new Map(); // ip -> array of timestamps (ms)
+const WINDOW_MS = 60 * 1000; // 1 minute window
 const MAX_REQUESTS_PER_WINDOW = 5;
 
 function isRateLimited(ip) {
@@ -93,29 +53,57 @@ Return ONLY valid JSON (no markdown code fences, no commentary, no preamble)
 matching exactly this shape:
 
 {
-  "name": "string, candidate's full name",
-  "contact": "string, contact info line (email / phone / location / links), best-effort from original CV",
-  "summary": "string, 2-4 sentence tailored professional summary",
-  "experience": [
+  "tailoredCv": {
+    "name": "string, candidate's full name",
+    "contact": "string, contact info line (email / phone / location / links), best-effort from original CV",
+    "summary": "string, 2-4 sentence tailored professional summary",
+    "experience": [
+      {
+        "title": "string, job title",
+        "company": "string, company name",
+        "dates": "string, e.g. 'Jan 2020 - Present'",
+        "bullets": ["string", "string"]
+      }
+    ],
+    "projects": [
+      {
+        "title": "string, project name",
+        "company": "string, e.g. 'Personal Project' or the institution/context",
+        "dates": "string, e.g. 'Jul 2026 - Present'",
+        "bullets": ["string", "string"],
+        "link": "string, optional URL if a live demo/repo link exists in the original CV, otherwise omit or empty string"
+      }
+    ],
+    "education": [
+      {
+        "degree": "string",
+        "institution": "string",
+        "dates": "string"
+      }
+    ],
+    "skills": ["string", "string"],
+    "certifications": ["string", "string"],
+    "interests": "string, comma-separated list as a single string, e.g. 'Travel, Music, Chess'"
+  },
+  "changes": [
     {
-      "title": "string, job title",
-      "company": "string, company name",
-      "dates": "string, e.g. 'Jan 2020 - Present'",
-      "bullets": ["string", "string"]
+      "summary": "string, a short, specific description of one thing you changed (e.g. 'Moved RAG/LLM experience to the top of the summary')",
+      "reason": "string, why this change helps match the job description (e.g. 'The job description leads with LLM integration as the primary responsibility')"
     }
   ],
-  "education": [
-    {
-      "degree": "string",
-      "institution": "string",
-      "dates": "string"
-    }
-  ],
-  "skills": ["string", "string"]
+  "missingSkills": [
+    "string, a skill, tool, or qualification the job description asks for that is NOT present anywhere in the candidate's original CV - do not include anything the candidate already has evidence of"
+  ]
 }
 
-If a section is not present in the original CV (e.g. no education listed),
-return an empty array for it rather than inventing content. Output raw JSON
+List 3-6 of the most significant changes, not every minor rewording. For
+missingSkills, only list genuine gaps - be conservative, and never list
+something the candidate's CV already demonstrates even if worded differently.
+If there are no meaningful gaps, return an empty array.
+
+If a section is not present in the original CV (e.g. no education, no projects,
+no certifications, or no interests listed), return an empty array (or empty
+string for interests) for it rather than inventing content. Output raw JSON
 only.`;
 
 module.exports = async (req, res) => {
@@ -246,15 +234,16 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       return;
     }
 
+    // Claude is instructed to return raw JSON, but strip code fences defensively.
     const cleaned = textBlock.text
       .trim()
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
       .replace(/```\s*$/i, "");
 
-    let tailoredCv;
+    let parsed;
     try {
-      tailoredCv = JSON.parse(cleaned);
+      parsed = JSON.parse(cleaned);
     } catch (parseErr) {
       console.error("Failed to parse Claude JSON response:", cleaned);
       res.status(502).json({
@@ -263,6 +252,13 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       return;
     }
 
+    // Support both the new wrapped shape ({ tailoredCv, changes, missingSkills })
+    // and a bare CV object, in case the model omits the wrapper.
+    const tailoredCv = parsed.tailoredCv || parsed;
+    const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
+    const missingSkills = Array.isArray(parsed.missingSkills) ? parsed.missingSkills : [];
+
+    // Basic shape defaults so downstream rendering never crashes.
     tailoredCv.name = tailoredCv.name || "";
     tailoredCv.contact = tailoredCv.contact || "";
     tailoredCv.summary = tailoredCv.summary || "";
@@ -273,6 +269,11 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       ? tailoredCv.education
       : [];
     tailoredCv.skills = Array.isArray(tailoredCv.skills) ? tailoredCv.skills : [];
+    tailoredCv.projects = Array.isArray(tailoredCv.projects) ? tailoredCv.projects : [];
+    tailoredCv.certifications = Array.isArray(tailoredCv.certifications)
+      ? tailoredCv.certifications
+      : [];
+    tailoredCv.interests = typeof tailoredCv.interests === "string" ? tailoredCv.interests : "";
 
     if (!isSubscribed) {
       const supabase = getSupabaseAdmin();
@@ -294,7 +295,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       }
     }
 
-    res.status(200).json({ tailoredCv });
+    res.status(200).json({ tailoredCv, changes, missingSkills });
   } catch (err) {
     console.error("Unexpected error in /api/tailor-cv:", err);
     res.status(500).json({ error: "Something went wrong. Please try again." });

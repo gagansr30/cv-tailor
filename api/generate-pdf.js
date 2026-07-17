@@ -193,6 +193,33 @@ async function buildPdf(cv) {
     });
   }
 
+  // Projects
+  if (cv.projects && cv.projects.length > 0) {
+    writer.drawSectionHeading("Projects");
+    cv.projects.forEach((proj) => {
+      const titleLine = [proj.title, proj.company].filter(Boolean).join("  |  ");
+      if (titleLine) {
+        writer.drawLine({ text: titleLine, font: fonts.bold, size: 12, gapAfter: 2 });
+      }
+      if (proj.dates) {
+        writer.drawLine({ text: proj.dates, font: fonts.italic, size: 10, color: GRAY, gapAfter: 6 });
+      }
+      (proj.bullets || []).forEach((bullet) => {
+        writer.drawBullet(bullet, fonts.regular, 11);
+      });
+      if (proj.link) {
+        writer.drawWrapped({
+          text: `Live demo: ${proj.link}`,
+          font: fonts.regular,
+          size: 10,
+          color: rgb(0.1, 0.2, 0.6),
+          gapAfter: 4,
+        });
+      }
+      writer.y -= 6;
+    });
+  }
+
   // Education
   if (cv.education && cv.education.length > 0) {
     writer.drawSectionHeading("Education");
@@ -211,6 +238,21 @@ async function buildPdf(cv) {
   if (cv.skills && cv.skills.length > 0) {
     writer.drawSectionHeading("Skills");
     writer.drawWrapped({ text: cv.skills.join("   •   "), size: 11, gapAfter: 6 });
+  }
+
+  // Certifications
+  if (cv.certifications && cv.certifications.length > 0) {
+    writer.drawSectionHeading("Certifications");
+    cv.certifications.forEach((cert) => {
+      writer.drawBullet(cert, fonts.regular, 11);
+    });
+    writer.y -= 4;
+  }
+
+  // Interests
+  if (cv.interests) {
+    writer.drawSectionHeading("Interests");
+    writer.drawWrapped({ text: cv.interests, size: 11, gapAfter: 6 });
   }
 
   return pdfDoc.save();

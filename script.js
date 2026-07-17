@@ -6,6 +6,10 @@ const tailorBtn = document.getElementById("tailor-btn");
 const statusMsg = document.getElementById("status-msg");
 const resultSection = document.getElementById("result-section");
 const resultOutput = document.getElementById("result-output");
+const analysisSection = document.getElementById("analysis-section");
+const changesList = document.getElementById("changes-list");
+const missingSkillsList = document.getElementById("missing-skills-list");
+const noMissingSkillsMsg = document.getElementById("no-missing-skills-msg");
 const downloadDocxBtn = document.getElementById("download-docx-btn");
 const downloadPdfBtn = document.getElementById("download-pdf-btn");
 
@@ -190,6 +194,41 @@ logoutBtn.addEventListener("click", async () => {
 
 // --- rendering ---------------------------------------------------------------
 
+function renderAnalysis(changes, missingSkills) {
+  const hasChanges = Array.isArray(changes) && changes.length > 0;
+  const hasMissingSkills = Array.isArray(missingSkills) && missingSkills.length > 0;
+
+  if (!hasChanges && !hasMissingSkills) {
+    analysisSection.classList.add("hidden");
+    return;
+  }
+
+  analysisSection.classList.remove("hidden");
+
+  changesList.innerHTML = "";
+  if (hasChanges) {
+    changes.forEach((c) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<strong>${escapeHtml(c.summary || "")}</strong><span class="change-reason">${escapeHtml(c.reason || "")}</span>`;
+      changesList.appendChild(li);
+    });
+  }
+
+  missingSkillsList.innerHTML = "";
+  if (hasMissingSkills) {
+    noMissingSkillsMsg.classList.add("hidden");
+    missingSkillsList.classList.remove("hidden");
+    missingSkills.forEach((skill) => {
+      const li = document.createElement("li");
+      li.textContent = skill;
+      missingSkillsList.appendChild(li);
+    });
+  } else {
+    missingSkillsList.classList.add("hidden");
+    noMissingSkillsMsg.classList.remove("hidden");
+  }
+}
+
 function renderTailoredCv(cv) {
   const parts = [];
 
@@ -203,7 +242,7 @@ function renderTailoredCv(cv) {
   if (cv.experience && cv.experience.length > 0) {
     parts.push("<h3>Work Experience</h3>");
     cv.experience.forEach((job) => {
-      const titleLine = [job.title, job.company].filter(Boolean).join(" &nbsp;|&nbsp; ");
+      const titleLine = [job.title, job.company].filter(Boolean).join("  |  ");
       parts.push(`<p><strong>${escapeHtml(titleLine)}</strong>`);
       if (job.dates) parts.push(`<br><span style="color:#666;">${escapeHtml(job.dates)}</span>`);
       parts.push("</p>");
@@ -215,10 +254,30 @@ function renderTailoredCv(cv) {
     });
   }
 
+  if (cv.projects && cv.projects.length > 0) {
+    parts.push("<h3>Projects</h3>");
+    cv.projects.forEach((proj) => {
+      const titleLine = [proj.title, proj.company].filter(Boolean).join("  |  ");
+      parts.push(`<p><strong>${escapeHtml(titleLine)}</strong>`);
+      if (proj.dates) parts.push(`<br><span style="color:#666;">${escapeHtml(proj.dates)}</span>`);
+      parts.push("</p>");
+      if (proj.bullets && proj.bullets.length > 0) {
+        parts.push("<ul>");
+        proj.bullets.forEach((b) => parts.push(`<li>${escapeHtml(b)}</li>`));
+        if (proj.link) {
+          parts.push(
+            `<li>Live demo: <a href="${escapeHtml(proj.link)}" target="_blank" rel="noopener">${escapeHtml(proj.link)}</a></li>`
+          );
+        }
+        parts.push("</ul>");
+      }
+    });
+  }
+
   if (cv.education && cv.education.length > 0) {
     parts.push("<h3>Education</h3>");
     cv.education.forEach((edu) => {
-      const line = [edu.degree, edu.institution].filter(Boolean).join(" &nbsp;|&nbsp; ");
+      const line = [edu.degree, edu.institution].filter(Boolean).join("  |  ");
       parts.push(`<p><strong>${escapeHtml(line)}</strong>`);
       if (edu.dates) parts.push(`<br><span style="color:#666;">${escapeHtml(edu.dates)}</span>`);
       parts.push("</p>");
@@ -228,6 +287,17 @@ function renderTailoredCv(cv) {
   if (cv.skills && cv.skills.length > 0) {
     parts.push("<h3>Skills</h3>");
     parts.push(`<p>${escapeHtml(cv.skills.join("  •  "))}</p>`);
+  }
+
+  if (cv.certifications && cv.certifications.length > 0) {
+    parts.push("<h3>Certifications</h3><ul>");
+    cv.certifications.forEach((cert) => parts.push(`<li>${escapeHtml(cert)}</li>`));
+    parts.push("</ul>");
+  }
+
+  if (cv.interests) {
+    parts.push("<h3>Interests</h3>");
+    parts.push(`<p>${escapeHtml(cv.interests)}</p>`);
   }
 
   resultOutput.innerHTML = parts.join("\n");
@@ -278,6 +348,7 @@ tailorBtn.addEventListener("click", async () => {
 
     currentTailoredCv = data.tailoredCv;
     renderTailoredCv(currentTailoredCv);
+    renderAnalysis(data.changes, data.missingSkills);
     resultSection.classList.remove("hidden");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
     setStatus("Done! Review the tailored CV below.");

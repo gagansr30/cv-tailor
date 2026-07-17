@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CV Tailor — Tailor your CV to any job description</title>
 <link rel="stylesheet" href="style.css" />
-<script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
 </head>
 <body>
   <header class="site-header">
@@ -40,7 +39,8 @@
           <input type="password" id="auth-password" required autocomplete="current-password" minlength="6" />
 
           <button type="submit" id="auth-submit-btn" class="btn btn-primary">Log in</button>
-          <p id="auth-msg" class="status-msg" aria-live="po        <p class="auth-note">Free: 2 tailored CVs. Subscribe for up to 100 per month.</p>        </form>
+          <p id="auth-msg" class="status-msg" aria-live="polite"></p>
+        </form>
         <p class="auth-note">Free: 3 tailored CVs. Subscribe for up to 100 per month.</p>
       </div>
     </section>
@@ -70,6 +70,19 @@
       </div>
 
       <section id="result-section" class="result-section hidden">
+        <div id="analysis-section" class="analysis-section hidden">
+          <div class="analysis-block">
+            <h3>What Changed &amp; Why</h3>
+            <ul id="changes-list" class="changes-list"></ul>
+          </div>
+          <div class="analysis-block">
+            <h3>Skills Missing From Your CV</h3>
+            <p class="analysis-note">Based on the job description, these weren't found anywhere in your original CV. This isn't a suggestion to add them without evidence — just worth knowing about before you apply.</p>
+            <ul id="missing-skills-list" class="missing-skills-list"></ul>
+            <p id="no-missing-skills-msg" class="no-missing-skills hidden">No obvious gaps found — good match on paper.</p>
+          </div>
+        </div>
+
         <h2>Tailored CV</h2>
         <div id="result-output" class="result-output"></div>
         <div class="action-row">
@@ -82,7 +95,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <p>Your CV content will be sent securely to generate a tailored version. No facts, skills, or experience are invented - only reordered and rephrased to match the role and Job description.</p>
+      <p>Your CV content is sent securely to generate a tailored version. No facts, skills, or experience are invented — only reordered and rephrased to match the role.</p>
     </div>
   </footer>
 
