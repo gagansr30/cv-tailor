@@ -39,6 +39,7 @@ const paywallText = document.getElementById("paywall-text");
 const subscribeBtn = document.getElementById("subscribe-btn");
 
 let currentTailoredCv = null;
+let currentIrrelevantSkills = [];
 let supabaseClient = null;
 let authMode = "login"; // "login" | "signup"
 let currentUserStatus = null; // { usageCount, freeLimit, isSubscribed, ... }
@@ -168,8 +169,8 @@ function setAuthMode(mode) {
 tabLogin.addEventListener("click", () => setAuthMode("login"));
 tabSignup.addEventListener("click", () => setAuthMode("signup"));
 
-async function submitAuthForm(e) {
-  if (e) e.preventDefault();
+authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
   const email = authEmailInput.value.trim();
   const password = authPasswordInput.value;
 
@@ -192,158 +193,13 @@ async function submitAuthForm(e) {
   } finally {
     authSubmitBtn.disabled = false;
   }
-}
-
-authForm.addEventListener("submit", submitAuthForm);
-authSubmitBtn.addEventListener("click", submitAuthForm);
+});
 
 logoutBtn.addEventListener("click", async () => {
   await supabaseClient.auth.signOut();
 });
 
 // --- rendering ---------------------------------------------------------------
-
-function extractUrls(text) {
-  if (!text) return [];
-  const matches = text.match(/(?:https?:\/\/|www\.)[^\s,;]+|linkedin\.com\/\S+|github\.com\/\S+/gi);
-  if (!matches) return [];
-  return [...new Set(matches.map((url) => normalizeUrl(url)))].filter(Boolean);
-}
-
-function extractEmails(text) {
-  if (!text) return [];
-  const matches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
-  return matches ? [...new Set(matches)] : [];
-}
-
-function extractPhones(text) {
-  if (!text) return [];
-  const matches = text.match(/\+?\d[\d\s().-]{6,}\d/g);
-  if (!matches) return [];
-  return [...new Set(matches.map((phone) => phone.trim()))];
-}
-
-function normalizeUrl(url) {
-  if (!url) return "";
-  let trimmed = String(url || "").trim().replace(/[.,;]+$/, "");
-  if (!trimmed) return "";
-  if (/^mailto:/i.test(trimmed) || /^tel:/i.test(trimmed)) return trimmed;
-  if (/^[^:\s]+:\/\//.test(trimmed)) return trimmed;
-  return `https://${trimmed.replace(/^www\./i, "")}`;
-}
-
-function parseContactSegment(text) {
-  const emails = extractEmails(text);
-  const phones = extractPhones(text);
-  const urls = extractUrls(text);
-
-  let remainder = String(text || "");
-  [...emails, ...phones, ...urls].forEach((item) => {
-    if (!item) return;
-    remainder = remainder.replace(item, "");
-  });
-  remainder = remainder.replace(/[|,\-]+/g, " ").replace(/\s+/g, " ").trim();
-
-  return {
-    emails,
-    phones,
-    urls,
-    location: remainder,
-  };
-}
-
-function addUniqueLink(links, url) {
-  const normalized = normalizeUrl(url);
-  if (!normalized) return;
-  if (!links.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
-    links.push(normalized);
-  }
-}
-
-function getHeadingText(text) {
-  return String(text || "").split(/\r?\n/).slice(0, 10).join("\n");
-}
-
-function ensureContactLinks(cv, originalText) {
-  const contact = String(cv.contact || "");
-  const contactData = parseContactSegment(contact);
-  const links = [...contactData.urls];
-
-  if (Array.isArray(cv.contactLinks)) {
-    cv.contactLinks.forEach((url) => addUniqueLink(links, url));
-  }
-
-  const headingUrls = extractUrls(getHeadingText(originalText));
-  headingUrls.forEach((url) => addUniqueLink(links, url));
-
-  const hasLinkedIn = links.some((url) => /linkedin\.com/i.test(url));
-  const hasGithub = links.some((url) => /github\.com/i.test(url));
-
-  if (!hasLinkedIn) {
-    const linkedinInput = window.prompt(
-      "We couldn't detect a LinkedIn URL in your CV header. Paste your LinkedIn profile URL to include it in the tailored CV, or leave blank if none."
-    );
-    if (linkedinInput) {
-      addUniqueLink(links, linkedinInput);
-    }
-  }
-
-  if (!hasGithub) {
-    const githubInput = window.prompt(
-      "We couldn't detect a GitHub URL in your CV header. Paste your GitHub profile URL to include it in the tailored CV, or leave blank if none."
-    );
-    if (githubInput) {
-      addUniqueLink(links, githubInput);
-    }
-  }
-
-  cv.contactLinks = links;
-}
-
-function renderContactPreview(cv) {
-  if (!cv) return "";
-  const contactData = parseContactSegment(cv.contact || "");
-  const links = [...contactData.urls];
-  if (Array.isArray(cv.contactLinks)) {
-    cv.contactLinks.forEach((url) => addUniqueLink(links, url));
-  }
-
-  const lineParts = [];
-  if (contactData.emails[0]) {
-    const email = contactData.emails[0];
-    lineParts.push(`<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`);
-  }
-  if (contactData.phones[0]) {
-    const phone = contactData.phones[0];
-    const tel = phone.replace(/[^+\d]/g, "");
-    lineParts.push(`<a href="tel:${escapeHtml(tel)}">${escapeHtml(phone)}</a>`);
-  }
-  if (contactData.location) {
-    lineParts.push(escapeHtml(contactData.location));
-  }
-
-  const lines = [];
-  if (lineParts.length > 0) {
-    lines.push(`<div class="cv-contact">${lineParts.join(" | ")}</div>`);
-  }
-
-  const uniqueLinks = [...new Set(links)];
-  if (uniqueLinks.length > 0) {
-    const linkHtml = uniqueLinks
-      .map(
-        (url) =>
-          `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`
-      )
-      .join(" | ");
-    lines.push(`<div class="cv-contact">${linkHtml}</div>`);
-  }
-
-  if (lines.length > 0) {
-    return lines.join("\n");
-  }
-
-  return cv.contact ? `<div class="cv-contact">${escapeHtml(cv.contact)}</div>` : "";
-}
 
 function renderAnalysis(changes, missingSkills) {
   const hasChanges = Array.isArray(changes) && changes.length > 0;
@@ -394,8 +250,7 @@ function renderTailoredCv(cv) {
   const parts = [];
 
   if (cv.name) parts.push(`<div class="cv-name">${escapeHtml(cv.name)}</div>`);
-  const contactHtml = renderContactPreview(cv);
-  if (contactHtml) parts.push(contactHtml);
+  if (cv.contact) parts.push(`<div class="cv-contact">${escapeHtml(cv.contact)}</div>`);
 
   if (cv.summary) {
     parts.push(`<h3>Professional Summary</h3><p>${renderBoldText(cv.summary)}</p>`);
@@ -476,7 +331,7 @@ function escapeHtml(str) {
 function renderBoldText(text) {
   if (!text) return "";
   const segments = [];
-  const regex = /\*\*([\s\S]*?)\*\*/g;
+  const regex = /\*\*(.+?)\*\*/g;
   let lastIndex = 0;
   let match;
   while ((match = regex.exec(text)) !== null) {
@@ -505,15 +360,27 @@ function renderSkillsReview() {
   skillsReviewSection.classList.remove("hidden");
   currentSkillsList.innerHTML = "";
   currentTailoredCv.skills.forEach((skill) => {
+    const isFlagged = currentIrrelevantSkills.includes(skill);
     const li = document.createElement("li");
+    if (isFlagged) li.className = "flagged-skill";
     const label = document.createElement("label");
     label.className = "skill-checkbox-label";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = skill;
     checkbox.className = "current-skill-checkbox";
+    // Pre-check skills the AI flagged as likely irrelevant to this job, so
+    // the user can review and confirm removal in one click - they can still
+    // uncheck any of these if they disagree.
+    checkbox.checked = isFlagged;
     label.appendChild(checkbox);
     label.appendChild(document.createTextNode(" " + skill));
+    if (isFlagged) {
+      const badge = document.createElement("span");
+      badge.className = "flagged-badge";
+      badge.textContent = "not clearly relevant to this job";
+      label.appendChild(badge);
+    }
     li.appendChild(label);
     currentSkillsList.appendChild(li);
   });
@@ -525,6 +392,19 @@ addSkillsBtn.addEventListener("click", () => {
     setStatus("Select at least one skill to add first.", true);
     return;
   }
+
+  // Honesty gate: never let a skill get added without an explicit
+  // confirmation that the person actually has real experience with it -
+  // the whole point of this tool is not fabricating skills, even at the
+  // user's own initiative.
+  const confirmed = window.confirm(
+    `Confirm: have you actually worked with/used ${checked.length === 1 ? "this" : "these"}?\n\n${checked.join(", ")}\n\nOnly confirm if you have real, genuine experience with ${checked.length === 1 ? "it" : "them"} - don't add something just because the job asks for it.`
+  );
+  if (!confirmed) {
+    setStatus("No skills added.");
+    return;
+  }
+
   if (!currentTailoredCv.skills) currentTailoredCv.skills = [];
   checked.forEach((skill) => {
     if (!currentTailoredCv.skills.includes(skill)) currentTailoredCv.skills.push(skill);
@@ -559,6 +439,7 @@ removeSkillsBtn.addEventListener("click", () => {
   if (!confirmed) return;
 
   currentTailoredCv.skills = currentTailoredCv.skills.filter((s) => !checked.includes(s));
+  currentIrrelevantSkills = currentIrrelevantSkills.filter((s) => !checked.includes(s));
   renderTailoredCv(currentTailoredCv);
   renderSkillsReview();
   setStatus(`Removed ${checked.length} skill(s) from your CV.`);
@@ -645,7 +526,7 @@ tailorBtn.addEventListener("click", async () => {
     }
 
     currentTailoredCv = data.tailoredCv;
-    ensureContactLinks(currentTailoredCv, cv);
+    currentIrrelevantSkills = Array.isArray(data.irrelevantSkills) ? data.irrelevantSkills : [];
     renderTailoredCv(currentTailoredCv);
     renderAnalysis(data.changes, data.missingSkills);
     renderSkillsReview();

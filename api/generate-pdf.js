@@ -6,7 +6,7 @@
 // Links (LinkedIn/GitHub in the header, and project demo links) are real
 // clickable PDF annotations, not just styled text.
 
-const { PDFDocument, StandardFonts, rgb, PDFString, PDFName } = require("pdf-lib");
+const { PDFDocument, StandardFonts, rgb, PDFString, PDFName, setWordSpacing } = require("pdf-lib");
 const { parseBoldSegments } = require("./_lib/boldSegments");
 
 const PAGE_WIDTH = 612;
@@ -27,6 +27,26 @@ function segmentsToWords(segments) {
     });
   });
   return words.filter((w) => w.text.length > 0);
+}
+
+// Merges consecutive same-styled words back into a single continuous run.
+// Word-level splitting is only needed to calculate where lines wrap; once
+// wrapping is decided, drawing word-by-word creates a separate PDF text
+// object per word, which many text extractors (including ATS parsers) treat
+// as a line break - splitting keyword phrases like "Machine Learning" into
+// "Machine" / "Learning" on separate lines. Merging back into style-runs
+// keeps the extracted text continuous while still supporting inline **bold**.
+function mergeWordsIntoRuns(words) {
+  const runs = [];
+  words.forEach((w) => {
+    const last = runs[runs.length - 1];
+    if (last && last.bold === w.bold) {
+      last.text += w.text;
+    } else {
+      runs.push({ text: w.text, bold: w.bold });
+    }
+  });
+  return runs;
 }
 
 // Splits a "contact" string (e.g. "email | phone | location | linkedin url | github url")
@@ -156,24 +176,30 @@ class PdfWriter {
       line.forEach((w) => {
         const font = w.bold ? this.fonts.bold : this.fonts.regular;
         lineWidth += font.widthOfTextAtSize(w.text, size);
-        if (w.text.endsWith(" ")) {
-          spaceCount += 1;
-        }
+        if (w.text.endsWith(" ")) spaceCount += 1;
       });
 
       const isLastLine = index === lines.length - 1;
-      const extraSpace = justify && !center && !isLastLine && spaceCount > 0 ? (maxWidth - lineWidth) / spaceCount : 0;
+      const runs = mergeWordsIntoRuns(line);
+      // Justify using the PDF word-spacing operator (Tw), which stretches
+      // every literal space character within a drawn string uniformly. This
+      // gives smooth, even justification across the whole line while still
+      // drawing each same-styled run as ONE continuous text object (so
+      // extracted/ATS-parsed text isn't fragmented at every word).
+      const wordSpacing =
+        justify && !center && !isLastLine && spaceCount > 0 ? (maxWidth - lineWidth) / spaceCount : 0;
       let x = center ? MARGIN + indent + (maxWidth - lineWidth) / 2 : MARGIN + indent;
 
-      line.forEach((w) => {
-        const font = w.bold ? this.fonts.bold : this.fonts.regular;
-        this.page.drawText(w.text, { x, y: this.y - size, size, font, color: BLACK });
-        const wordWidth = font.widthOfTextAtSize(w.text, size);
-        x += wordWidth;
-        if (extraSpace > 0 && w.text.endsWith(" ")) {
-          x += extraSpace;
-        }
+      if (wordSpacing > 0) this.page.pushOperators(setWordSpacing(wordSpacing));
+
+      runs.forEach((run) => {
+        const font = run.bold ? this.fonts.bold : this.fonts.regular;
+        this.page.drawText(run.text, { x, y: this.y - size, size, font, color: BLACK });
+        const spacesInRun = (run.text.match(/ /g) || []).length;
+        x += font.widthOfTextAtSize(run.text, size) + spacesInRun * wordSpacing;
       });
+
+      if (wordSpacing > 0) this.page.pushOperators(setWordSpacing(0));
       this.y -= size + lineGap;
     });
     this.y -= gapAfter;
@@ -263,10 +289,11 @@ class PdfWriter {
         this.page.drawText("•", { x: MARGIN, y: this.y - size, size, font: this.fonts.regular, color: BLACK });
       }
       let x = MARGIN + bulletIndent;
-      line.forEach((w) => {
-        const font = w.bold ? this.fonts.bold : this.fonts.regular;
-        this.page.drawText(w.text, { x, y: this.y - size, size, font, color: BLACK });
-        x += font.widthOfTextAtSize(w.text, size);
+      const runs = mergeWordsIntoRuns(line);
+      runs.forEach((run) => {
+        const font = run.bold ? this.fonts.bold : this.fonts.regular;
+        this.page.drawText(run.text, { x, y: this.y - size, size, font, color: BLACK });
+        x += font.widthOfTextAtSize(run.text, size);
       });
       this.y -= size + 4;
     });

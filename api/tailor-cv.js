@@ -108,13 +108,26 @@ matching exactly this shape:
   ],
   "missingSkills": [
     "string, a skill, tool, or qualification the job description asks for that is NOT present anywhere in the candidate's original CV - do not include anything the candidate already has evidence of"
+  ],
+  "irrelevantSkills": [
+    "string, copied EXACTLY (same spelling/casing) from tailoredCv.skills - a skill the candidate genuinely has, but that has no clear relevance to THIS specific job description, so the candidate may want to remove it from this tailored version to keep the skills section focused"
   ]
 }
 
 List 3-6 of the most significant changes, not every minor rewording. For
 missingSkills, only list genuine gaps - be conservative, and never list
 something the candidate's CV already demonstrates even if worded differently.
-If there are no meaningful gaps, return an empty array.
+If there are no meaningful gaps, return an empty array. For irrelevantSkills,
+actively flag any skill from tailoredCv.skills that is NOT referenced,
+implied, or clearly useful for THIS specific job description - even if it's
+a perfectly legitimate skill in general. The goal is a focused, tailored
+skills section for this one application, not a complete inventory of
+everything the candidate knows. Only leave a skill unflagged if the job
+description's responsibilities, requirements, or tech stack connect to it in
+some clear way. It's normal and expected for several skills to be flagged -
+don't default to an empty list just to be safe. Every string in
+irrelevantSkills MUST be an exact match to an entry already present in
+tailoredCv.skills.
 
 If a section is not present in the original CV (e.g. no education, no projects,
 no certifications, or no interests listed), return an empty array (or empty
@@ -339,7 +352,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 4000,
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userMessage }],
       }),
@@ -385,6 +398,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
     const tailoredCv = parsed.tailoredCv || parsed;
     const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
     const missingSkills = Array.isArray(parsed.missingSkills) ? parsed.missingSkills : [];
+    const rawIrrelevantSkills = Array.isArray(parsed.irrelevantSkills) ? parsed.irrelevantSkills : [];
 
     sanitizeTailoredCv(tailoredCv);
 
@@ -399,6 +413,10 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       ? tailoredCv.education
       : [];
     tailoredCv.skills = Array.isArray(tailoredCv.skills) ? tailoredCv.skills : [];
+    // Only keep irrelevantSkills entries that exactly match a real skill in
+    // the final list - defensive against the model paraphrasing a skill name
+    // slightly differently than how it appears in tailoredCv.skills.
+    const irrelevantSkills = rawIrrelevantSkills.filter((s) => tailoredCv.skills.includes(s));
     tailoredCv.projects = Array.isArray(tailoredCv.projects) ? tailoredCv.projects : [];
     tailoredCv.certifications = Array.isArray(tailoredCv.certifications)
       ? tailoredCv.certifications
@@ -425,7 +443,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       }
     }
 
-    res.status(200).json({ tailoredCv, changes, missingSkills });
+    res.status(200).json({ tailoredCv, changes, missingSkills, irrelevantSkills });
   } catch (err) {
     console.error("Unexpected error in /api/tailor-cv:", err);
     res.status(500).json({ error: "Something went wrong. Please try again." });
