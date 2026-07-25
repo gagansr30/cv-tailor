@@ -132,3 +132,25 @@ Format compliance doesn't guarantee passing a specific ATS screen — that still
 ## License / Ownership
 
 Personal project, built solo by Gagan S R.
+## Profile / Base CV update (July 2026)
+
+New flow: the user fills their profile **once** (upload or paste a CV → AI reads it into an editable profile → user reviews, edits, adds, reorders → saves). That saved **base CV** is then used for every tailoring — no re-pasting.
+
+### One-time Supabase migration (required)
+
+Run this in the Supabase SQL editor before deploying:
+
+```sql
+alter table profiles add column if not exists base_cv jsonb;
+alter table profiles add column if not exists base_cv_updated_at timestamptz;
+```
+
+### What was added / changed
+
+- **`api/parse-cv.js` (new)** — reads raw CV text into the structured profile schema (verbatim, no rewriting). Does *not* consume a tailoring credit.
+- **`api/base-cv.js` (new)** — GET / POST / DELETE of the saved base CV on the user's profile row.
+- **`api/_lib/cvShape.js` (new)** — shared CV shape normalization, section-order handling, and serialization of the structured base CV back to text for the tailoring prompt.
+- **`api/extract-cv-text.js`** — now preserves hyperlinks: DOCX links are pulled via a mammoth HTML pass, PDF link *annotations* are read with pdf-lib. Links whose URL isn't visible in the text are appended in a "Hyperlinks found in the document" appendix that the parse/tailor prompts re-attach to the right entry.
+- **`api/tailor-cv.js`** — accepts `{ baseCv, jobDescription }` (structured object) as well as the legacy `{ cv, jobDescription }` text. New strict rule: URLs must be copied character-for-character. New outputs: `recommendedSectionOrder` + `sectionOrderReason`, and `tailoredCv.sectionOrder`. Experience entries can now carry a `link`.
+- **`api/generate-docx.js` / `api/generate-pdf.js`** — render sections in `cv.sectionOrder` (any valid order; missing keys fall back to the default order). Experience links render like project links; label generalized from "Live demo:" to "Link:".
+- **Frontend (`index.html`, `script.js`, `style.css`)** — profile setup → editable profile editor (add/remove/edit entries, ↑↓ reordering of sections *and* entries) → base CV card with Edit / Start Over → tailor with the AI's recommended section order applied by default, still rearrangeable on the preview before downloading.

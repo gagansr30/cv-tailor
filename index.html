@@ -11,7 +11,7 @@
     <div class="container header-row">
       <div>
         <h1>CV Tailor</h1>
-        <p class="tagline">Paste your CV and a job description. Get back a tailored, honest, better-matched CV.</p>
+        <p class="tagline">Set up your profile once, then tailor your CV to any job description in seconds.</p>
       </div>
       <div id="account-box" class="account-box hidden">
         <span id="account-email" class="account-email"></span>
@@ -53,28 +53,117 @@
         <button id="subscribe-btn" class="btn btn-primary">Subscribe</button>
       </div>
 
-      <section class="input-grid">
+      <!-- STEP 1: PROFILE SETUP (no base CV yet) -->
+      <section id="profile-setup-section" class="panel hidden">
+        <h2>Set up your profile</h2>
+        <p class="panel-intro">
+          Upload or paste your CV once. It will be read into an editable profile — you review, fix, and confirm it.
+          That saved profile becomes your base CV for every future tailoring, so you never paste your CV again.
+        </p>
         <div class="field">
-          <label for="cv-input">Your CV</label>
+          <label for="setup-cv-input">Your CV</label>
           <div class="upload-row">
             <label for="cv-file-input" class="btn btn-secondary btn-small">Upload CV (PDF or Word)</label>
             <input type="file" id="cv-file-input" accept=".pdf,.docx" class="visually-hidden" />
             <span id="upload-status" class="upload-status"></span>
           </div>
-          <textarea id="cv-input" placeholder="Paste your full CV text here, or upload a file above..." spellcheck="false"></textarea>
+          <textarea id="setup-cv-input" placeholder="Paste your full CV text here, or upload a file above..." spellcheck="false"></textarea>
         </div>
+        <div class="action-row">
+          <button id="parse-cv-btn" class="btn btn-primary">Read My CV &amp; Fill Profile</button>
+          <span id="setup-status-msg" class="status-msg" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <!-- STEP 2: PROFILE EDITOR (review / edit / confirm) -->
+      <section id="profile-editor-section" class="panel hidden">
+        <h2 id="profile-editor-title">Review your profile</h2>
+        <p class="panel-intro">
+          Everything below is editable. Fix anything that was read incorrectly, add anything that's missing,
+          reorder sections and entries with the arrows, then save. This becomes your base CV.
+        </p>
+        <div id="profile-editor"></div>
+        <div class="action-row editor-actions">
+          <button id="save-profile-btn" class="btn btn-primary">Save Profile as Base CV</button>
+          <button id="cancel-edit-btn" class="btn btn-secondary hidden">Cancel</button>
+          <span id="editor-status-msg" class="status-msg" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <!-- STEP 3: TAILOR (base CV exists) -->
+      <section id="tailor-section" class="hidden">
+        <div class="base-cv-card">
+          <div class="base-cv-info">
+            <span class="base-cv-label">Base CV</span>
+            <strong id="base-cv-name"></strong>
+            <span id="base-cv-updated" class="base-cv-updated"></span>
+          </div>
+          <div class="base-cv-actions">
+            <button id="edit-profile-btn" class="btn btn-secondary btn-small">Edit Profile</button>
+            <button id="reset-profile-btn" class="btn btn-ghost-dark btn-small">Start Over</button>
+          </div>
+        </div>
+
         <div class="field">
           <label for="jd-input">Job Description</label>
           <textarea id="jd-input" placeholder="Paste the job description here..." spellcheck="false"></textarea>
         </div>
+
+        <div class="action-row">
+          <button id="tailor-btn" class="btn btn-primary">Tailor CV</button>
+          <span id="status-msg" class="status-msg" aria-live="polite"></span>
+        </div>
       </section>
 
-      <div class="action-row">
-        <button id="tailor-btn" class="btn btn-primary">Tailor CV</button>
-        <span id="status-msg" class="status-msg" aria-live="polite"></span>
-      </div>
-
+      <!-- RESULT -->
       <section id="result-section" class="result-section hidden">
+        <div id="match-score" class="match-score hidden">
+          <h3>ATS Match Score</h3>
+          <p class="analysis-note">Computed from real keyword coverage — the way ATS filters and recruiter searches actually screen CVs. It updates live as you add or remove skills below.</p>
+          <div class="score-row">
+            <div class="score-box">
+              <span id="score-before" class="score-value">–</span>
+              <span class="score-caption">Original CV</span>
+            </div>
+            <span class="score-arrow">→</span>
+            <div class="score-box score-box-after">
+              <span id="score-after" class="score-value">–</span>
+              <span class="score-caption">This version</span>
+            </div>
+          </div>
+          <div id="ats-breakdown" class="ats-breakdown hidden">
+            <div class="ats-group">
+              <h4>Matched keywords (<span id="ats-matched-count">0</span>)</h4>
+              <div id="ats-matched-list" class="keyword-chips"></div>
+            </div>
+            <div class="ats-group">
+              <h4>Missing keywords (<span id="ats-missing-count">0</span>)</h4>
+              <div id="ats-missing-list" class="keyword-chips"></div>
+              <div class="ats-missing-actions">
+                <button id="ats-select-all-btn" class="btn-link" type="button">Select all</button>
+                <button id="ats-add-keywords-btn" class="btn btn-secondary btn-small" type="button">Add selected to Skills</button>
+              </div>
+              <p class="analysis-note">Click keywords to select them, then add the ones you genuinely have. ★ = the job description treats it as required. A keyword you can't back up in an interview scores points with software and loses them with humans.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="ats-compat" class="ats-compat">
+          <div class="ats-compat-header">
+            <h3>ATS Compatibility Check</h3>
+            <button id="ats-check-btn" class="btn btn-secondary btn-small">See exactly what ATS software sees</button>
+          </div>
+          <p class="analysis-note">Every ATS starts the same way: parse your file into plain text, index it, filter on keywords. This builds your real document and shows you the actual parsed output plus the checks that pipeline runs. No tool can reproduce one vendor's private ranking or guarantee a #1 spot — anyone claiming that is selling snake oil — but a CV that parses cleanly and covers the required keywords clears the automated layer everywhere.</p>
+          <div id="ats-check-results" class="hidden">
+            <ul id="ats-checklist" class="ats-checklist"></ul>
+            <h4>What the parser sees (extracted from your actual document)</h4>
+            <pre id="ats-extracted-text" class="ats-extracted"></pre>
+            <h4>Where the 50 major ATS platforms fit</h4>
+            <p class="analysis-note">Grouped by how they screen. The checks above cover the parsing + keyword layer they all share; what happens after that is humans (most of them) or employer-configured matching.</p>
+            <div id="ats-platform-groups"></div>
+          </div>
+        </div>
+
         <div id="analysis-section" class="analysis-section hidden">
           <div class="analysis-block">
             <h3>What Changed &amp; Why</h3>
@@ -94,6 +183,12 @@
           <p class="analysis-note">Check any skills below that feel irrelevant for this role, then approve removal. Nothing is removed until you confirm.</p>
           <ul id="current-skills-list" class="current-skills-list"></ul>
           <button id="remove-skills-btn" class="btn btn-secondary btn-small">Remove Selected Skills</button>
+        </div>
+
+        <div id="order-note" class="order-note hidden">
+          <strong>Recommended section order applied.</strong>
+          <span id="order-reason"></span>
+          <span class="order-hint">Use the ↑ ↓ arrows on each section below to change the order — downloads follow whatever order you set.</span>
         </div>
 
         <h2>Tailored CV</h2>

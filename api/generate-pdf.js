@@ -7,7 +7,7 @@
 // clickable PDF annotations, not just styled text.
 
 const { PDFDocument, StandardFonts, rgb, PDFString, PDFName, setWordSpacing } = require("pdf-lib");
-const { parseBoldSegments } = require("./_lib/boldSegments");
+const { parseBoldSegments, parseLinkSegments } = require("./_lib/boldSegments");
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
@@ -23,10 +23,23 @@ function segmentsToWords(segments) {
     const parts = seg.text.split(" ");
     parts.forEach((part, i) => {
       if (part === "" && i === parts.length - 1) return;
-      words.push({ text: part + (i < parts.length - 1 ? " " : ""), bold: seg.bold });
+      words.push({ text: part + (i < parts.length - 1 ? " " : ""), bold: seg.bold, url: seg.url });
     });
   });
   return words.filter((w) => w.text.length > 0);
+}
+
+// Turns a string that may contain [Label](url) markdown links into the same
+// word model used for wrapping, tagging each word of a link's label with its
+// destination URL so it can be drawn in link color with a real annotation.
+function linkAwareWords(text) {
+  const words = [];
+  parseLinkSegments(text).forEach((seg) => {
+    segmentsToWords(parseBoldSegments(seg.text)).forEach((w) => {
+      words.push({ ...w, url: seg.url });
+    });
+  });
+  return words;
 }
 
 // Merges consecutive same-styled words back into a single continuous run.
@@ -40,24 +53,36 @@ function mergeWordsIntoRuns(words) {
   const runs = [];
   words.forEach((w) => {
     const last = runs[runs.length - 1];
-    if (last && last.bold === w.bold) {
+    if (last && last.bold === w.bold && last.url === w.url) {
       last.text += w.text;
     } else {
-      runs.push({ text: w.text, bold: w.bold });
+      runs.push({ text: w.text, bold: w.bold, url: w.url });
     }
   });
   return runs;
 }
 
-// Splits a "contact" string (e.g. "email | phone | location | linkedin url | github url")
-// into an info line (email/phone/location) and an array of link URLs, so links can be
-// rendered as individually clickable regions on their own centered line.
+// Splits a "contact" string (e.g. "email | phone | location | [LinkedIn](url) | github url")
+// into an info line (email/phone/location) and an array of { text, url } links, so links
+// can be rendered as individually clickable regions on their own centered line - showing
+// the label for [Label](url) parts and the URL itself for bare-URL parts.
 function splitContactParts(contact) {
   if (!contact) return { infoLine: "", linkParts: [] };
   const parts = contact.split("|").map((p) => p.trim()).filter(Boolean);
-  const isLink = (p) => /^https?:\/\//i.test(p) || /linkedin\.com|github\.com/i.test(p);
-  const infoParts = parts.filter((p) => !isLink(p));
-  const linkParts = parts.filter(isLink);
+  const markdownLink = (p) => p.match(/^\[([^\]]+)\]\(\s*([^)\s]+)\s*\)$/);
+  const isBareLink = (p) => /^https?:\/\//i.test(p) || /linkedin\.com|github\.com/i.test(p);
+  const infoParts = [];
+  const linkParts = [];
+  parts.forEach((part) => {
+    const md = markdownLink(part);
+    if (md) {
+      linkParts.push({ text: md[1].trim(), url: md[2] });
+    } else if (isBareLink(part)) {
+      linkParts.push({ text: part, url: part });
+    } else {
+      infoParts.push(part);
+    }
+  });
   return { infoLine: infoParts.join("  |  "), linkParts };
 }
 
@@ -132,14 +157,14 @@ class PdfWriter {
     this.ensureSpace(size + gapAfter);
     const separator = "  |  ";
     const sepWidth = font.widthOfTextAtSize(separator, size);
-    const widths = parts.map((p) => font.widthOfTextAtSize(p, size));
+    const widths = parts.map((p) => font.widthOfTextAtSize(p.text, size));
     const totalWidth = widths.reduce((a, b) => a + b, 0) + sepWidth * (parts.length - 1);
     let x = (PAGE_WIDTH - totalWidth) / 2;
     const yBaseline = this.y - size;
 
     parts.forEach((part, i) => {
-      this.page.drawText(part, { x, y: yBaseline, size, font, color });
-      addLinkAnnotation(this.page, part, x, yBaseline - 2, widths[i], size + 4);
+      this.page.drawText(part.text, { x, y: yBaseline, size, font, color });
+      addLinkAnnotation(this.page, part.url, x, yBaseline - 2, widths[i], size + 4);
       x += widths[i];
       if (i < parts.length - 1) {
         this.page.drawText(separator, { x, y: yBaseline, size, font, color: GRAY });
@@ -264,7 +289,7 @@ class PdfWriter {
 
   drawMixedBullet(text, size = 11) {
     const bulletIndent = 14;
-    const words = segmentsToWords(parseBoldSegments(text));
+    const words = linkAwareWords(text);
     const maxWidth = CONTENT_WIDTH - bulletIndent;
 
     const lines = [];
@@ -292,8 +317,12 @@ class PdfWriter {
       const runs = mergeWordsIntoRuns(line);
       runs.forEach((run) => {
         const font = run.bold ? this.fonts.bold : this.fonts.regular;
-        this.page.drawText(run.text, { x, y: this.y - size, size, font, color: BLACK });
-        x += font.widthOfTextAtSize(run.text, size);
+        const runWidth = font.widthOfTextAtSize(run.text, size);
+        this.page.drawText(run.text, { x, y: this.y - size, size, font, color: run.url ? LINK_COLOR : BLACK });
+        if (run.url) {
+          addLinkAnnotation(this.page, run.url, x, this.y - size - 2, runWidth, size + 4);
+        }
+        x += runWidth;
       });
       this.y -= size + 4;
     });
@@ -312,6 +341,9 @@ async function buildPdf(cv) {
   const writer = new PdfWriter(pdfDoc, fonts);
 
   writer.drawLine({ text: cv.name || "Your Name", font: fonts.bold, size: 18, align: "center", gapAfter: 6 });
+  if (cv.jobTitle) {
+    writer.drawLine({ text: cv.jobTitle, font: fonts.regular, size: 11.5, color: GRAY, align: "center", gapAfter: 6 });
+  }
   if (cv.contact) {
     const { infoLine, linkParts } = splitContactParts(cv.contact);
     if (infoLine) {
@@ -324,11 +356,6 @@ async function buildPdf(cv) {
     }
   }
 
-  if (cv.summary) {
-    writer.drawSectionHeading("Profile");
-    writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10, justify: true });
-  }
-
   const drawRoleBlock = (entry) => {
     writer.drawRoleHeader(entry.company, entry.dates);
     if (entry.title) {
@@ -337,7 +364,7 @@ async function buildPdf(cv) {
     (entry.bullets || []).forEach((b) => writer.drawMixedBullet(b, 11));
     if (entry.link) {
       writer.drawLine({
-        text: `Live demo: ${entry.link}`,
+        text: `Link: ${entry.link}`,
         font: fonts.regular,
         size: 9,
         color: LINK_COLOR,
@@ -348,38 +375,59 @@ async function buildPdf(cv) {
     writer.y -= 6;
   };
 
-  if (cv.experience && cv.experience.length > 0) {
-    writer.drawSectionHeading("Work Experience");
-    cv.experience.forEach(drawRoleBlock);
-  }
+  // Body sections, rendered in the CV's sectionOrder (falling back to the
+  // default order for any keys the order array is missing).
+  const sectionRenderers = {
+    summary: () => {
+      if (!cv.summary) return;
+      writer.drawSectionHeading("Profile");
+      writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10, justify: true });
+    },
+    experience: () => {
+      if (!cv.experience || cv.experience.length === 0) return;
+      writer.drawSectionHeading("Work Experience");
+      cv.experience.forEach(drawRoleBlock);
+    },
+    projects: () => {
+      if (!cv.projects || cv.projects.length === 0) return;
+      writer.drawSectionHeading("Projects");
+      cv.projects.forEach(drawRoleBlock);
+    },
+    education: () => {
+      if (!cv.education || cv.education.length === 0) return;
+      writer.drawSectionHeading("Education");
+      cv.education.forEach((edu) =>
+        drawRoleBlock({ company: edu.institution, dates: edu.dates, title: edu.degree, bullets: [] })
+      );
+    },
+    skills: () => {
+      if (!cv.skills || cv.skills.length === 0) return;
+      writer.drawSectionHeading("Skills");
+      writer.drawMixedWrapped({ text: cv.skills.join(", "), size: 11, gapAfter: 6, justify: true });
+    },
+    certifications: () => {
+      if (!cv.certifications || cv.certifications.length === 0) return;
+      writer.drawSectionHeading("Certifications");
+      cv.certifications.forEach((cert) => writer.drawMixedBullet(cert, 11));
+      writer.y -= 4;
+    },
+    interests: () => {
+      if (!cv.interests) return;
+      writer.drawSectionHeading("Interests");
+      writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6, justify: true });
+    },
+  };
 
-  if (cv.projects && cv.projects.length > 0) {
-    writer.drawSectionHeading("Projects");
-    cv.projects.forEach(drawRoleBlock);
-  }
-
-  if (cv.education && cv.education.length > 0) {
-    writer.drawSectionHeading("Education");
-    cv.education.forEach((edu) =>
-      drawRoleBlock({ company: edu.institution, dates: edu.dates, title: edu.degree, bullets: [] })
-    );
-  }
-
-  if (cv.skills && cv.skills.length > 0) {
-    writer.drawSectionHeading("Skills");
-    writer.drawMixedWrapped({ text: cv.skills.join(", "), size: 11, gapAfter: 6, justify: true });
-  }
-
-  if (cv.certifications && cv.certifications.length > 0) {
-    writer.drawSectionHeading("Certifications");
-    cv.certifications.forEach((cert) => writer.drawMixedBullet(cert, 11));
-    writer.y -= 4;
-  }
-
-  if (cv.interests) {
-    writer.drawSectionHeading("Interests");
-    writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6, justify: true });
-  }
+  const defaultOrder = Object.keys(sectionRenderers);
+  const requestedOrder = Array.isArray(cv.sectionOrder) ? cv.sectionOrder : [];
+  const order = [];
+  requestedOrder.forEach((key) => {
+    if (sectionRenderers[key] && !order.includes(key)) order.push(key);
+  });
+  defaultOrder.forEach((key) => {
+    if (!order.includes(key)) order.push(key);
+  });
+  order.forEach((key) => sectionRenderers[key]());
 
   return pdfDoc.save();
 }
@@ -398,7 +446,14 @@ module.exports = async (req, res) => {
     }
 
     const pdfBytes = await buildPdf(tailoredCv);
-    const filename = `${(tailoredCv.name || "tailored-cv").replace(/[^a-z0-9]+/gi, "-")}.pdf`;
+    const filenameBase = [tailoredCv.name, tailoredCv.jobTitle, tailoredCv.companyName]
+      .map((p) => String(p || "").trim())
+      .filter(Boolean)
+      .join(" - ")
+      .replace(/[^a-z0-9 \-]+/gi, "")
+      .replace(/\s+/g, " ")
+      .trim() || "tailored-cv";
+    const filename = `${filenameBase}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

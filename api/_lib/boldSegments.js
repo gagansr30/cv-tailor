@@ -22,4 +22,27 @@ function parseBoldSegments(text) {
   return segments.length > 0 ? segments : [{ text, bold: false }];
 }
 
-module.exports = { parseBoldSegments };
+module.exports = { parseBoldSegments, parseLinkSegments };
+
+// Parses [Label](url) markdown-style links out of a string into an array of
+// { text, url? } segments, so links whose visible text differs from their URL
+// (e.g. "LinkedIn" in the contact line, or a certification's verify link) can
+// be rendered as real clickable text in DOCX/PDF/HTML output.
+function parseLinkSegments(text) {
+  if (!text) return [{ text: "" }];
+  const segments = [];
+  const regex = /\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index) });
+    }
+    segments.push({ text: match[1], url: match[2] });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex) });
+  }
+  return segments.length > 0 ? segments : [{ text }];
+}

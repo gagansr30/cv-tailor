@@ -11,6 +11,9 @@
     },
     "api/extract-cv-text.js": {
       "maxDuration": 30
+    },
+    "api/parse-cv.js": {
+      "maxDuration": 60
     }
   }
 }
