@@ -76,6 +76,11 @@ STRICT RULES (do not break these under any circumstances):
   Preserve each one EXACTLY as written - same visible text, same brackets,
   same URL, character-for-character. Never unwrap them into a bare URL,
   never change the label, never drop them.
+- ONE PAGE: strong CVs fit one page. Keep the summary to 2-3 sentences.
+  Keep 3-5 of the MOST RELEVANT bullets per role/project for THIS job and
+  keep each bullet under ~25 words. Prefer cutting weaker bullets over
+  shortening strong ones. Never cut entire roles, projects, education
+  entries, or certifications - trim within entries, not across them.
 
 Return ONLY valid JSON (no markdown code fences, no commentary, no preamble)
 matching exactly this shape:
@@ -420,7 +425,7 @@ Rewrite and restructure the CV per your instructions, and return only the JSON o
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 8000,
+        max_tokens: 12000,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userMessage }],
       }),

@@ -8,14 +8,26 @@
 
 const { PDFDocument, StandardFonts, rgb, PDFString, PDFName, setWordSpacing } = require("pdf-lib");
 const { parseBoldSegments, parseLinkSegments } = require("./_lib/boldSegments");
+const { getTemplate } = require("./_lib/templates");
 
-const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
-const MARGIN = 54;
+// A4 paper with tight margins (matching a 10pt LaTeX one-page layout:
+// left/right 0.40in, top 0.25in, bottom 0.15in) to maximize what fits on
+// one page before the auto-fit scaling even engages.
+const PAGE_WIDTH = 595.28; // A4
+const PAGE_HEIGHT = 841.89;
+const MARGIN = 28.8; // 0.40in left/right
+const MARGIN_TOP = 18; // 0.25in
+const MARGIN_BOTTOM = 10.8; // 0.15in
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 const BLACK = rgb(0.1, 0.1, 0.1);
 const GRAY = rgb(0.4, 0.4, 0.4);
 const LINK_COLOR = rgb(0.1, 0.2, 0.6);
+
+function hexToRgb(hex) {
+  if (!hex) return null;
+  const n = parseInt(hex, 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+}
 
 function segmentsToWords(segments) {
   const words = [];
@@ -120,17 +132,20 @@ function addLinkAnnotation(page, url, x, y, width, height) {
 }
 
 class PdfWriter {
-  constructor(pdfDoc, fonts) {
+  constructor(pdfDoc, fonts, tpl, gapScale = 1) {
     this.pdfDoc = pdfDoc;
     this.fonts = fonts;
+    this.tpl = tpl;
+    this.gs = gapScale;
+    this.accent = hexToRgb(tpl.accent);
     this.page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    this.y = PAGE_HEIGHT - MARGIN;
+    this.y = PAGE_HEIGHT - MARGIN_TOP;
   }
 
   ensureSpace(neededHeight) {
-    if (this.y - neededHeight < MARGIN) {
+    if (this.y - neededHeight < MARGIN_BOTTOM) {
       this.page = this.pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      this.y = PAGE_HEIGHT - MARGIN;
+      this.y = PAGE_HEIGHT - MARGIN_TOP;
     }
   }
 
@@ -152,14 +167,14 @@ class PdfWriter {
   // Draws multiple centered parts on one line, separated by " | ", where each
   // part can optionally have its own clickable URL (used for the header's
   // LinkedIn / GitHub line, since each needs a separate link target).
-  drawCenteredLinkParts({ parts, font, size = 10, color = LINK_COLOR, gapAfter = 16 }) {
+  drawCenteredLinkParts({ parts, font, size = 10, color = LINK_COLOR, gapAfter = 16, align = "center" }) {
     if (!parts || parts.length === 0) return;
     this.ensureSpace(size + gapAfter);
     const separator = "  |  ";
     const sepWidth = font.widthOfTextAtSize(separator, size);
     const widths = parts.map((p) => font.widthOfTextAtSize(p.text, size));
     const totalWidth = widths.reduce((a, b) => a + b, 0) + sepWidth * (parts.length - 1);
-    let x = (PAGE_WIDTH - totalWidth) / 2;
+    let x = align === "left" ? MARGIN : (PAGE_WIDTH - totalWidth) / 2;
     const yBaseline = this.y - size;
 
     parts.forEach((part, i) => {
@@ -171,7 +186,7 @@ class PdfWriter {
         x += sepWidth;
       }
     });
-    this.y -= size + gapAfter;
+    this.y -= size + gapAfter * this.gs;
   }
 
   drawMixedWrapped({ text, size = 11, gapAfter = 8, lineGap = 3, indent = 0, center = false, justify = false }) {
@@ -260,19 +275,31 @@ class PdfWriter {
   }
 
   drawSectionHeading(text) {
-    this.ensureSpace(30);
+    this.ensureSpace(34);
     this.y -= 6;
     const upper = text.toUpperCase();
-    const size = 12;
+    const size = Math.round(this.tpl.pdfBody + 1);
+    // gaps around headings scale with the fit pass
     const textWidth = this.fonts.bold.widthOfTextAtSize(upper, size);
-    const x = (PAGE_WIDTH - textWidth) / 2;
-    this.page.drawText(upper, { x, y: this.y - size, size, font: this.fonts.bold, color: BLACK });
-    this.y -= size + 14;
+    const x = this.tpl.headingAlign === "left" ? MARGIN : (PAGE_WIDTH - textWidth) / 2;
+    const headingColor = this.accent && this.tpl.headingUseAccent !== false ? this.accent : BLACK;
+    this.page.drawText(upper, { x, y: this.y - size, size, font: this.fonts.bold, color: headingColor });
+    this.y -= size + 4 * this.gs;
+    if (this.tpl.headingRule) {
+      this.page.drawLine({
+        start: { x: MARGIN, y: this.y },
+        end: { x: PAGE_WIDTH - MARGIN, y: this.y },
+        thickness: 0.7,
+        color: this.accent || rgb(0.65, 0.65, 0.65),
+      });
+      this.y -= 6 * this.gs;
+    }
+    this.y -= 8 * this.gs;
   }
 
   drawRoleHeader(company, dates) {
     this.ensureSpace(16);
-    const size = 11;
+    const size = this.tpl.pdfBody;
     this.page.drawText(company || "", { x: MARGIN, y: this.y - size, size, font: this.fonts.bold, color: BLACK });
     if (dates) {
       const dateWidth = this.fonts.bold.widthOfTextAtSize(dates, size);
@@ -324,33 +351,55 @@ class PdfWriter {
         }
         x += runWidth;
       });
-      this.y -= size + 4;
+      this.y -= size + 4 * this.gs;
     });
-    this.y -= 2;
+    this.y -= 2 * this.gs;
   }
 }
 
-async function buildPdf(cv) {
-  const pdfDoc = await PDFDocument.create();
-  const fonts = {
-    regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
-    bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-    italic: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
+async function renderPdfOnce(cv, templateId, scale) {
+  const baseTpl = getTemplate(templateId);
+  const tpl = {
+    ...baseTpl,
+    pdfBody: baseTpl.pdfBody * scale,
+    pdfName: baseTpl.pdfName * Math.max(scale, 0.92), // name shrinks less
   };
+  const pdfDoc = await PDFDocument.create();
+  const fonts =
+    tpl.pdfFont === "times"
+      ? {
+          regular: await pdfDoc.embedFont(StandardFonts.TimesRoman),
+          bold: await pdfDoc.embedFont(StandardFonts.TimesRomanBold),
+          italic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
+        }
+      : {
+          regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
+          bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+          italic: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
+        };
 
-  const writer = new PdfWriter(pdfDoc, fonts);
+  const gapScale = scale >= 1 ? 1 : scale >= 0.95 ? 0.8 : scale >= 0.9 ? 0.65 : 0.55;
+  const writer = new PdfWriter(pdfDoc, fonts, tpl, gapScale);
+  const headerAlign = tpl.nameAlign === "left" ? "left" : "center";
 
-  writer.drawLine({ text: cv.name || "Your Name", font: fonts.bold, size: 18, align: "center", gapAfter: 6 });
+  writer.drawLine({
+    text: tpl.nameCaps ? (cv.name || "Your Name").toUpperCase() : cv.name || "Your Name",
+    font: fonts.bold,
+    size: tpl.pdfName,
+    align: headerAlign,
+    gapAfter: 6,
+    color: writer.accent || BLACK,
+  });
   if (cv.jobTitle) {
-    writer.drawLine({ text: cv.jobTitle, font: fonts.regular, size: 11.5, color: GRAY, align: "center", gapAfter: 6 });
+    writer.drawLine({ text: cv.jobTitle, font: fonts.regular, size: tpl.pdfBody + 0.5, color: GRAY, align: headerAlign, gapAfter: 6 });
   }
   if (cv.contact) {
     const { infoLine, linkParts } = splitContactParts(cv.contact);
     if (infoLine) {
-      writer.drawLine({ text: infoLine, font: fonts.regular, size: 10, color: GRAY, align: "center", gapAfter: 2 });
+      writer.drawLine({ text: infoLine, font: fonts.regular, size: tpl.pdfBody - 1, color: GRAY, align: headerAlign, gapAfter: 2 });
     }
     if (linkParts.length > 0) {
-      writer.drawCenteredLinkParts({ parts: linkParts, font: fonts.regular, size: 10, gapAfter: 16 });
+      writer.drawCenteredLinkParts({ parts: linkParts, font: fonts.regular, size: tpl.pdfBody - 1, gapAfter: 16, align: headerAlign });
     } else if (infoLine) {
       writer.y -= 14;
     }
@@ -359,9 +408,9 @@ async function buildPdf(cv) {
   const drawRoleBlock = (entry) => {
     writer.drawRoleHeader(entry.company, entry.dates);
     if (entry.title) {
-      writer.drawWrappedPlain({ text: entry.title, font: fonts.italic, size: 11, gapAfter: 6 });
+      writer.drawWrappedPlain({ text: entry.title, font: fonts.italic, size: tpl.pdfBody, gapAfter: 6 });
     }
-    (entry.bullets || []).forEach((b) => writer.drawMixedBullet(b, 11));
+    (entry.bullets || []).forEach((b) => writer.drawMixedBullet(b, tpl.pdfBody));
     if (entry.link) {
       writer.drawLine({
         text: `Link: ${entry.link}`,
@@ -372,7 +421,7 @@ async function buildPdf(cv) {
         url: entry.link,
       });
     }
-    writer.y -= 6;
+    writer.y -= 6 * gapScale;
   };
 
   // Body sections, rendered in the CV's sectionOrder (falling back to the
@@ -381,7 +430,7 @@ async function buildPdf(cv) {
     summary: () => {
       if (!cv.summary) return;
       writer.drawSectionHeading("Profile");
-      writer.drawMixedWrapped({ text: cv.summary, size: 11, gapAfter: 10, justify: true });
+      writer.drawMixedWrapped({ text: cv.summary, size: tpl.pdfBody, gapAfter: 10, justify: true });
     },
     experience: () => {
       if (!cv.experience || cv.experience.length === 0) return;
@@ -403,18 +452,18 @@ async function buildPdf(cv) {
     skills: () => {
       if (!cv.skills || cv.skills.length === 0) return;
       writer.drawSectionHeading("Skills");
-      writer.drawMixedWrapped({ text: cv.skills.join(", "), size: 11, gapAfter: 6, justify: true });
+      writer.drawMixedWrapped({ text: cv.skills.join(", "), size: tpl.pdfBody, gapAfter: 6, justify: true });
     },
     certifications: () => {
       if (!cv.certifications || cv.certifications.length === 0) return;
       writer.drawSectionHeading("Certifications");
-      cv.certifications.forEach((cert) => writer.drawMixedBullet(cert, 11));
+      cv.certifications.forEach((cert) => writer.drawMixedBullet(cert, tpl.pdfBody));
       writer.y -= 4;
     },
     interests: () => {
       if (!cv.interests) return;
       writer.drawSectionHeading("Interests");
-      writer.drawMixedWrapped({ text: cv.interests, size: 11, gapAfter: 6, justify: true });
+      writer.drawMixedWrapped({ text: cv.interests, size: tpl.pdfBody, gapAfter: 6, justify: true });
     },
   };
 
@@ -429,7 +478,23 @@ async function buildPdf(cv) {
   });
   order.forEach((key) => sectionRenderers[key]());
 
-  return pdfDoc.save();
+  return { bytes: await pdfDoc.save(), pages: pdfDoc.getPageCount() };
+}
+
+// Auto-fit: most CVs should be one page. Render at full size first; if the
+// result spills past one page, retry with progressively tighter type and
+// spacing down to a readability floor (~85% type, ~65% gaps). If even the
+// floor can't fit one page there's genuinely too much content - return the
+// full-size readable multi-page version instead of shrinking further.
+async function buildPdf(cv, templateId) {
+  const passes = [1, 0.95, 0.9, 0.85];
+  let firstResult = null;
+  for (const scale of passes) {
+    const result = await renderPdfOnce(cv, templateId, scale);
+    if (scale === 1) firstResult = result;
+    if (result.pages <= 1) return result.bytes;
+  }
+  return firstResult.bytes;
 }
 
 module.exports = async (req, res) => {
@@ -439,13 +504,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { tailoredCv } = req.body || {};
+    const { tailoredCv, template } = req.body || {};
     if (!tailoredCv || typeof tailoredCv !== "object") {
       res.status(400).json({ error: "Missing 'tailoredCv' object in request body." });
       return;
     }
 
-    const pdfBytes = await buildPdf(tailoredCv);
+    const pdfBytes = await buildPdf(tailoredCv, template);
     const filenameBase = [tailoredCv.name, tailoredCv.jobTitle, tailoredCv.companyName]
       .map((p) => String(p || "").trim())
       .filter(Boolean)
@@ -463,3 +528,4 @@ module.exports = async (req, res) => {
     res.status(500).json({ error: "Failed to generate PDF document." });
   }
 };
+module.exports.renderPdfOnce = renderPdfOnce;

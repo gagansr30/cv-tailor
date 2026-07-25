@@ -10,8 +10,10 @@ const {
   Paragraph,
   TextRun,
   AlignmentType,
+  BorderStyle,
   ExternalHyperlink,
 } = require("docx");
+const { getTemplate } = require("./_lib/templates");
 const { parseBoldSegments, parseLinkSegments } = require("./_lib/boldSegments");
 
 // Builds text runs from a string that may contain [Label](url) markdown
@@ -41,10 +43,67 @@ function runsWithLinks(text, extraProps = {}) {
   return children;
 }
 
-const FONT = "Calibri";
-const BODY_SIZE = 23; // 11.5pt, half-points
-const NAME_SIZE = 26; // 13pt
-const DATE_TAB_POSITION = 9350; // right tab stop for dates, twips
+const DATE_TAB_POSITION = 10754; // right tab stop = A4 content width (11906 - 2*576 twips)
+
+// Active template style, set at the top of buildDocument. Paragraph
+// construction is fully synchronous, so per-request mutation is safe.
+let TPL = getTemplate("classic");
+let FONT = TPL.docxFont;
+let BODY_SIZE = TPL.docxBody;
+let NAME_SIZE = TPL.docxName;
+
+function applyTemplate(templateId, cv) {
+  TPL = getTemplate(templateId);
+  FONT = TPL.docxFont;
+  BODY_SIZE = TPL.docxBody;
+  NAME_SIZE = TPL.docxName;
+  SPACE = 1;
+  if (cv) {
+    const estimate = estimateLines(cv);
+    if (estimate > 58) {
+      SPACE = 0.5; // clearly long: tightest spacing + slightly smaller type
+      BODY_SIZE = Math.max(20, TPL.docxBody - 2);
+    } else if (estimate > 46) {
+      SPACE = 0.65; // mildly long: tighter spacing only
+      BODY_SIZE = Math.max(20, TPL.docxBody - 1);
+    }
+  }
+}
+
+// Spacing multiplier for one-page fitting (Word can't be page-measured
+// server-side, so a content estimate decides the tier).
+let SPACE = 1;
+
+function sp(n) {
+  return Math.max(10, Math.round(n * SPACE));
+}
+
+// Rough line estimate at ~95 chars/line body text. A comfortably-spaced
+// page holds ~46 lines; past that, tighten spacing (and slightly the type).
+function estimateLines(cv) {
+  let lines = 4; // name + title + contact + links
+  const textLines = (t) => Math.max(1, Math.ceil(String(t || "").length / 95));
+  if (cv.summary) lines += 2 + textLines(cv.summary);
+  (cv.experience || []).concat(cv.projects || []).forEach((e) => {
+    lines += 2.5;
+    (e.bullets || []).forEach((b) => (lines += textLines(b)));
+    if (e.link) lines += 1;
+  });
+  if ((cv.education || []).length) lines += 2 + cv.education.length * 1.5;
+  if ((cv.skills || []).length) lines += 2 + textLines(cv.skills.join(", "));
+  if ((cv.certifications || []).length) lines += 2 + cv.certifications.length;
+  if (cv.interests) lines += 2 + textLines(cv.interests);
+  lines += 2 * Math.max(0, (cv.sectionOrder || []).length - 1); // heading spacing
+  return lines;
+}
+
+function headingAlignment() {
+  return TPL.headingAlign === "left" ? AlignmentType.LEFT : AlignmentType.CENTER;
+}
+
+function nameAlignment() {
+  return TPL.nameAlign === "left" ? AlignmentType.LEFT : AlignmentType.CENTER;
+}
 
 // Trims a regex-matched URL and strips trailing punctuation the match may
 // have accidentally swept up (e.g. a comma or period right after a link).
@@ -77,10 +136,19 @@ function textRunsFromSegments(text, extraProps = {}) {
 function sectionHeading(text) {
   return new Paragraph({
     children: [
-      new TextRun({ text: text.toUpperCase(), bold: true, size: BODY_SIZE, font: FONT }),
+      new TextRun({
+        text: text.toUpperCase(),
+        bold: true,
+        size: BODY_SIZE,
+        font: FONT,
+        color: TPL.accent && TPL.headingUseAccent !== false ? TPL.accent : "000000",
+      }),
     ],
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 240, after: 120 },
+    alignment: headingAlignment(),
+    spacing: { before: sp(240), after: sp(120) },
+    border: TPL.headingRule
+      ? { bottom: { color: TPL.accent || "AAAAAA", size: 6, style: BorderStyle.SINGLE, space: 2 } }
+      : undefined,
   });
 }
 
@@ -88,7 +156,7 @@ function bulletParagraph(text) {
   return new Paragraph({
     children: textRunsFromSegments(text),
     bullet: { level: 0 },
-    spacing: { after: 80 },
+    spacing: { after: sp(80) },
   });
 }
 
@@ -100,14 +168,14 @@ function roleHeaderParagraph(company, dates) {
       new TextRun({ text: dates || "", bold: true, size: BODY_SIZE, font: FONT }),
     ],
     tabStops: [{ type: "right", position: DATE_TAB_POSITION }],
-    spacing: { before: 140, after: 20 },
+    spacing: { before: sp(140), after: sp(20) },
   });
 }
 
 function titleParagraph(text) {
   return new Paragraph({
     children: [new TextRun({ text, italics: true, size: BODY_SIZE, font: FONT })],
-    spacing: { after: 60 },
+    spacing: { after: sp(60) },
   });
 }
 
@@ -127,22 +195,31 @@ function buildRoleBlock({ company, dates, title, bullets, link }) {
           }),
         ],
         bullet: { level: 0 },
-        spacing: { after: 80 },
+        spacing: { after: sp(80) },
       })
     );
   }
   return paras;
 }
 
-function buildDocument(cv) {
+function buildDocument(cv, templateId) {
+  applyTemplate(templateId, cv);
   const children = [];
 
   // Name
   children.push(
     new Paragraph({
-      children: [new TextRun({ text: cv.name || "Your Name", bold: true, size: NAME_SIZE, font: FONT })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 60 },
+      children: [
+        new TextRun({
+          text: TPL.nameCaps ? (cv.name || "Your Name").toUpperCase() : cv.name || "Your Name",
+          bold: true,
+          size: NAME_SIZE,
+          font: FONT,
+          color: TPL.accent || "000000",
+        }),
+      ],
+      alignment: nameAlignment(),
+      spacing: { after: sp(60) },
     })
   );
 
@@ -151,8 +228,8 @@ function buildDocument(cv) {
     children.push(
       new Paragraph({
         children: [new TextRun({ text: cv.jobTitle, size: BODY_SIZE, font: FONT, color: "555555" })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 60 },
+        alignment: nameAlignment(),
+        spacing: { after: sp(60) },
       })
     );
   }
@@ -210,8 +287,8 @@ function buildDocument(cv) {
       children.push(
         new Paragraph({
           children: contactLineRuns,
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 40 },
+          alignment: nameAlignment(),
+          spacing: { after: sp(40) },
         })
       );
     }
@@ -258,8 +335,8 @@ function buildDocument(cv) {
       children.push(
         new Paragraph({
           children: linkRuns,
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 200 },
+          alignment: nameAlignment(),
+          spacing: { after: sp(200) },
         })
       );
     }
@@ -274,7 +351,7 @@ function buildDocument(cv) {
       children.push(
         new Paragraph({
           children: textRunsFromSegments(cv.summary),
-          spacing: { after: 160 },
+          spacing: { after: sp(160) },
           alignment: AlignmentType.JUSTIFIED,
         })
       );
@@ -322,7 +399,7 @@ function buildDocument(cv) {
       children.push(
         new Paragraph({
           children: [new TextRun({ text: "•  " + cv.skills.join("  •  "), size: BODY_SIZE, font: FONT })],
-          spacing: { after: 100 },
+          spacing: { after: sp(100) },
           alignment: AlignmentType.JUSTIFIED,
         })
       );
@@ -335,7 +412,7 @@ function buildDocument(cv) {
           new Paragraph({
             children: runsWithLinks(cert),
             bullet: { level: 0 },
-            spacing: { after: 80 },
+            spacing: { after: sp(80) },
           })
         )
       );
@@ -346,7 +423,7 @@ function buildDocument(cv) {
       children.push(
         new Paragraph({
           children: [new TextRun({ text: cv.interests, size: BODY_SIZE, font: FONT })],
-          spacing: { after: 100 },
+          spacing: { after: sp(100) },
           alignment: AlignmentType.JUSTIFIED,
         })
       );
@@ -367,7 +444,13 @@ function buildDocument(cv) {
   return new Document({
     sections: [
       {
-        properties: { page: { margin: { top: 620, bottom: 620, left: 620, right: 620 } } },
+        properties: {
+          page: {
+            // A4 with tight margins: left/right 0.40in, top 0.25in, bottom 0.15in
+            size: { width: 11906, height: 16838 },
+            margin: { top: 360, bottom: 216, left: 576, right: 576 },
+          },
+        },
         children,
       },
     ],
@@ -382,13 +465,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { tailoredCv } = req.body || {};
+    const { tailoredCv, template } = req.body || {};
     if (!tailoredCv || typeof tailoredCv !== "object") {
       res.status(400).json({ error: "Missing 'tailoredCv' object in request body." });
       return;
     }
 
-    const doc = buildDocument(tailoredCv);
+    const doc = buildDocument(tailoredCv, template);
     const buffer = await Packer.toBuffer(doc);
 
     const filenameBase = [tailoredCv.name, tailoredCv.jobTitle, tailoredCv.companyName]

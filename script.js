@@ -958,6 +958,27 @@ function tailoredCvToPlainText(cv) {
   return parts.filter(Boolean).join("\n");
 }
 
+// Animates a score element from its last value to the new one (~450ms).
+// Respects prefers-reduced-motion by jumping straight to the value.
+function animateScoreValue(elm, target) {
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const from = parseInt(elm.dataset.value || "0", 10) || 0;
+  elm.dataset.value = String(target);
+  if (reduced || from === target) {
+    elm.textContent = `${target}%`;
+    return;
+  }
+  const start = performance.now();
+  const duration = 450;
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    elm.textContent = `${Math.round(from + (target - from) * eased)}%`;
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function keywordChip(entry, matchedClass) {
   return el("span", {
     class: `keyword-chip ${matchedClass}`,
@@ -970,16 +991,41 @@ function keywordChip(entry, matchedClass) {
 // after tailoring and again whenever the user adds/removes skills.
 function refreshAtsScore() {
   if (!currentAtsKeywords.length || !currentTailoredCv) {
-    matchScorePanel.classList.add("hidden");
+    // Don't vanish silently - say why there's no score, so a missing panel
+    // is diagnosable instead of invisible.
+    if (currentTailoredCv) {
+      scoreBeforeEl.textContent = "–";
+      scoreAfterEl.textContent = "–";
+      scoreBeforeEl.className = "score-value";
+      scoreAfterEl.className = "score-value";
+      atsMatchedCountEl.textContent = "0";
+      atsMissingCountEl.textContent = "0";
+      atsMatchedListEl.innerHTML = "";
+      atsMissingListEl.innerHTML = "";
+      atsMissingListEl.appendChild(
+        el("span", {
+          class: "check-detail",
+          text: "Keyword extraction didn't come back for this run - tailor again to retry the score.",
+        })
+      );
+      atsSelectAllBtn.classList.add("hidden");
+      atsAddKeywordsBtn.classList.add("hidden");
+      atsBreakdownEl.classList.remove("hidden");
+      matchScorePanel.classList.remove("hidden");
+    } else {
+      matchScorePanel.classList.add("hidden");
+    }
     return;
   }
   const result = scoreCvTextAgainstKeywords(tailoredCvToPlainText(currentTailoredCv), currentAtsKeywords);
   const scoreClass = (v) => (v === null ? "" : v >= 75 ? "score-good" : v >= 50 ? "score-mid" : "score-low");
 
-  scoreBeforeEl.textContent = atsScoreBefore === null ? "–" : `${atsScoreBefore}%`;
   scoreBeforeEl.className = `score-value ${scoreClass(atsScoreBefore)}`;
-  scoreAfterEl.textContent = result.score === null ? "–" : `${result.score}%`;
+  if (atsScoreBefore === null) scoreBeforeEl.textContent = "–";
+  else animateScoreValue(scoreBeforeEl, atsScoreBefore);
   scoreAfterEl.className = `score-value ${scoreClass(result.score)}`;
+  if (result.score === null) scoreAfterEl.textContent = "–";
+  else animateScoreValue(scoreAfterEl, result.score);
 
   atsMatchedCountEl.textContent = String(result.matched.length);
   atsMissingCountEl.textContent = String(result.missing.length);
@@ -1468,6 +1514,54 @@ atsCheckBtn.addEventListener("click", async () => {
   }
 });
 
+// --- CV templates -------------------------------------------------------------
+
+const templateCardsEl = document.getElementById("template-cards");
+
+const CV_TEMPLATES = [
+  { id: "classic", label: "Classic", description: "Centered headings, timeless and neutral" },
+  { id: "modern", label: "Modern", description: "Left-aligned with a blue accent and rules" },
+  { id: "elegant", label: "Elegant", description: "Serif type, centered, understated rules" },
+  { id: "compact", label: "Compact", description: "Tighter type to fit more on a page" },
+  { id: "finance", label: "Finance / Academic", description: "Serif, all-caps name, ruled headings — banking & quant classic" },
+  { id: "scholar", label: "Scholar", description: "Serif with left ruled headings — graduate school style" },
+  { id: "executive", label: "Executive", description: "Large name, prominent role line, full-width rules" },
+  { id: "cardinal", label: "Cardinal", description: "Centered name, navy left headings with rules" },
+  { id: "onepage", label: "One-Page Tech", description: "Tight sans layout with ruled caps headings" },
+  { id: "timeline", label: "Timeline", description: "Blue name and rules, black headings — moderncv feel" },
+];
+
+let selectedTemplate = "classic";
+
+function renderTemplatePicker() {
+  templateCardsEl.innerHTML = "";
+  CV_TEMPLATES.forEach((tpl) => {
+    const thumb = el("div", { class: `tpl-thumb thumb-${tpl.id}` }, [
+      el("div", { class: "thumb-name", text: "Gagan S R" }),
+      el("div", { class: "thumb-contact", text: "email | phone | LinkedIn" }),
+      el("div", { class: "thumb-heading", text: "Experience" }),
+      el("div", { class: "thumb-text", text: "AI Engineer — Acme Co" }),
+      el("div", { class: "thumb-text dim", text: "Built RAG pipelines with Python" }),
+      el("div", { class: "thumb-heading", text: "Skills" }),
+      el("div", { class: "thumb-text dim", text: "Python, RAG, LangGraph" }),
+    ]);
+    const card = el(
+      "button",
+      {
+        type: "button",
+        class: "template-card" + (selectedTemplate === tpl.id ? " template-selected" : ""),
+        onclick: () => {
+          selectedTemplate = tpl.id;
+          resultOutput.className = `result-output tpl-${tpl.id}`;
+          renderTemplatePicker();
+        },
+      },
+      [thumb, el("span", { class: "template-label", text: tpl.label }), el("span", { class: "template-desc", text: tpl.description })]
+    );
+    templateCardsEl.appendChild(card);
+  });
+}
+
 // --- main tailor action -----------------------------------------------------
 
 tailorBtn.addEventListener("click", async () => {
@@ -1484,6 +1578,7 @@ tailorBtn.addEventListener("click", async () => {
   }
 
   tailorBtn.disabled = true;
+  tailorBtn.classList.add("btn-loading");
   setStatus("Tailoring your CV… this can take up to 20 seconds.");
   resultSection.classList.add("hidden");
 
@@ -1522,6 +1617,8 @@ tailorBtn.addEventListener("click", async () => {
     }
 
     renderTailoredCv(currentTailoredCv);
+    resultOutput.classList.add(`tpl-${selectedTemplate}`);
+    renderTemplatePicker();
     atsCheckResults.classList.add("hidden"); // stale results from a previous tailoring
     currentAtsKeywords = data.ats && Array.isArray(data.ats.keywords) ? data.ats.keywords : [];
     selectedAtsKeywords.clear();
@@ -1530,6 +1627,9 @@ tailorBtn.addEventListener("click", async () => {
     renderAnalysis(data.changes, data.missingSkills);
     renderSkillsReview();
     resultSection.classList.remove("hidden");
+    resultSection.classList.remove("reveal");
+    void resultSection.offsetWidth; // restart the animation on re-tailor
+    resultSection.classList.add("reveal");
     resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
     setStatus("Done! Review the tailored CV below.");
     await refreshUserStatus();
@@ -1537,6 +1637,7 @@ tailorBtn.addEventListener("click", async () => {
     console.error(err);
     setStatus("Network error. Please check your connection and try again.", true);
   } finally {
+    tailorBtn.classList.remove("btn-loading");
     if (!currentUserStatus || currentUserStatus.isSubscribed || currentUserStatus.remainingFree > 0) {
       tailorBtn.disabled = false;
     }
@@ -1557,7 +1658,7 @@ async function downloadFile(endpoint, mimeExt) {
     const response = await authedFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tailoredCv: currentTailoredCv }),
+      body: JSON.stringify({ tailoredCv: currentTailoredCv, template: selectedTemplate }),
     });
 
     if (!response.ok) {
