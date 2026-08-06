@@ -164,8 +164,16 @@ function toDraft(cv) {
 // --- bootstrap: fetch public config, init Supabase client -------------------
 
 async function init() {
-  const configResponse = await fetch("/api/config");
-  const config = await configResponse.json();
+  let config;
+  try {
+    const configResponse = await fetch("/api/config");
+    config = await configResponse.json();
+  } catch (err) {
+    console.error("Failed to load /api/config:", err);
+    document.body.innerHTML =
+      '<p style="padding:40px;font-family:sans-serif;">Could not reach the server. Please check your connection and reload the page.</p>';
+    return;
+  }
 
   if (!config.supabaseUrl || !config.supabaseAnonKey) {
     document.body.innerHTML =
@@ -177,7 +185,7 @@ async function init() {
 
   const params = new URLSearchParams(window.location.search);
   if (params.get("checkout") === "success") {
-    setStatus("Subscription active — thanks! Refreshing your account...");
+    setStatus("Subscription active, thanks! Refreshing your account...");
     window.history.replaceState({}, "", window.location.pathname);
   } else if (params.get("checkout") === "cancelled") {
     window.history.replaceState({}, "", window.location.pathname);
@@ -187,8 +195,13 @@ async function init() {
     handleSession(session);
   });
 
-  const { data } = await supabaseClient.auth.getSession();
-  handleSession(data.session);
+  try {
+    const { data } = await supabaseClient.auth.getSession();
+    handleSession(data.session);
+  } catch (err) {
+    console.error("Failed to load session:", err);
+    setStatus("Could not restore your session. Please log in again.", true);
+  }
 }
 
 let lastSessionUserId = null;
@@ -460,9 +473,18 @@ function readFileAsBase64(file) {
   });
 }
 
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // matches the server's cap in api/extract-cv-text.js
+
 cvFileInput.addEventListener("change", async () => {
   const file = cvFileInput.files[0];
   if (!file) return;
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    uploadStatus.textContent = "That file is too large (8MB limit). Please upload a smaller file or paste the CV text directly.";
+    uploadStatus.classList.add("error");
+    cvFileInput.value = "";
+    return;
+  }
 
   uploadStatus.textContent = "Reading file…";
   uploadStatus.classList.remove("error");
@@ -483,7 +505,7 @@ cvFileInput.addEventListener("change", async () => {
     }
 
     setupCvInput.value = data.text;
-    uploadStatus.textContent = `Loaded "${file.name}" — now click "Read My CV & Fill Profile".`;
+    uploadStatus.textContent = `Loaded "${file.name}". Now click "Read My CV & Fill Profile".`;
   } catch (err) {
     console.error(err);
     uploadStatus.textContent = "Failed to read that file. Please try again or paste your CV text directly.";
@@ -1441,19 +1463,19 @@ const atsPlatformGroupsEl = document.getElementById("ats-platform-groups");
 // which is what the compatibility checks and keyword score cover.
 const ATS_PLATFORM_GROUPS = [
   {
-    title: "Structured review — recruiters read parsed CVs and run keyword searches; no auto-ranking",
+    title: "Structured review: recruiters read parsed CVs and run keyword searches, no auto-ranking",
     platforms: ["Greenhouse", "Lever", "Ashby", "Teamtailor", "Workable", "Recruitee", "Pinpoint", "Breezy HR", "JazzHR", "BambooHR", "Personio Recruiting", "HiBob Recruiting", "Freshteam", "CareerPlug", "ApplicantPro", "Hireology", "ClearCompany", "NeoGov", "Rippling Recruiting", "Zoho Recruit"],
   },
   {
-    title: "Enterprise suites — parsed into profile fields; recruiters filter with boolean/keyword search and knockout questions",
+    title: "Enterprise suites: parsed into profile fields, recruiters filter with boolean/keyword search and knockout questions",
     platforms: ["Workday", "iCIMS", "Oracle Recruiting Cloud", "Oracle Taleo", "SAP SuccessFactors", "UKG Pro Recruiting", "Dayforce Recruiting", "IBM Kenexa BrassRing", "Cornerstone Recruiting", "PeopleFluent", "Oleeo", "Tribepad", "Avature", "SmartRecruiters", "Jobvite", "Darwinbox Recruiting"],
   },
   {
-    title: "AI matching / high-volume screening — employer-configured models rank on skills extracted from the same parsed text",
+    title: "AI matching / high-volume screening: employer-configured models rank on skills extracted from the same parsed text",
     platforms: ["Eightfold AI", "Phenom", "Paradox", "Fountain", "Manatal", "CEIPAL ATS"],
   },
   {
-    title: "Staffing & agency CRMs — recruiters source by keyword/boolean search across parsed CVs",
+    title: "Staffing & agency CRMs: recruiters source by keyword/boolean search across parsed CVs",
     platforms: ["Bullhorn ATS", "JobAdder", "JobDiva", "Crelate", "TrackerRMS", "Recruit CRM", "Recruiterflow", "Loxo"],
   },
 ];
@@ -1496,7 +1518,7 @@ atsCheckBtn.addEventListener("click", async () => {
           el("span", { class: "check-icon", text: check.pass ? "✓" : "✗" }),
           el("span", {}, [
             el("strong", { text: check.label }),
-            el("span", { class: "check-detail", text: " — " + check.detail }),
+            el("span", { class: "check-detail", text: ": " + check.detail }),
           ]),
         ])
       );
@@ -1523,12 +1545,12 @@ const CV_TEMPLATES = [
   { id: "modern", label: "Modern", description: "Left-aligned with a blue accent and rules" },
   { id: "elegant", label: "Elegant", description: "Serif type, centered, understated rules" },
   { id: "compact", label: "Compact", description: "Tighter type to fit more on a page" },
-  { id: "finance", label: "Finance / Academic", description: "Serif, all-caps name, ruled headings — banking & quant classic" },
-  { id: "scholar", label: "Scholar", description: "Serif with left ruled headings — graduate school style" },
+  { id: "finance", label: "Finance / Academic", description: "Serif, all-caps name, ruled headings, banking and quant classic" },
+  { id: "scholar", label: "Scholar", description: "Serif with left ruled headings, graduate school style" },
   { id: "executive", label: "Executive", description: "Large name, prominent role line, full-width rules" },
   { id: "cardinal", label: "Cardinal", description: "Centered name, navy left headings with rules" },
   { id: "onepage", label: "One-Page Tech", description: "Tight sans layout with ruled caps headings" },
-  { id: "timeline", label: "Timeline", description: "Blue name and rules, black headings — moderncv feel" },
+  { id: "timeline", label: "Timeline", description: "Blue name and rules, black headings, moderncv feel" },
 ];
 
 let selectedTemplate = "classic";
@@ -1540,7 +1562,7 @@ function renderTemplatePicker() {
       el("div", { class: "thumb-name", text: "Gagan S R" }),
       el("div", { class: "thumb-contact", text: "email | phone | LinkedIn" }),
       el("div", { class: "thumb-heading", text: "Experience" }),
-      el("div", { class: "thumb-text", text: "AI Engineer — Acme Co" }),
+      el("div", { class: "thumb-text", text: "AI Engineer, Acme Co" }),
       el("div", { class: "thumb-text dim", text: "Built RAG pipelines with Python" }),
       el("div", { class: "thumb-heading", text: "Skills" }),
       el("div", { class: "thumb-text dim", text: "Python, RAG, LangGraph" }),

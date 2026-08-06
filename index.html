@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CV Tailor — Tailor your CV to any job description</title>
+<title>CV Tailor: Tailor Your CV to Any Job Description</title>
+<meta name="description" content="Upload your CV once, then generate a tailored, ATS-checked version for any job description in seconds. No invented skills, no fabricated numbers." />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -41,7 +42,7 @@
           <button type="submit" id="auth-submit-btn" class="btn btn-primary">Log in</button>
           <p id="auth-msg" class="status-msg" aria-live="polite"></p>
         </form>
-        <p class="auth-note">Free: 3 tailored CVs. Subscribe for up to 100 per month.</p>
+        <p class="auth-note">Free: 2 tailored CVs. Subscribe for up to 100 per month.</p>
       </div>
     </section>
 
@@ -57,7 +58,7 @@
       <section id="profile-setup-section" class="panel hidden">
         <h2>Set up your profile</h2>
         <p class="panel-intro">
-          Upload or paste your CV once. It will be read into an editable profile — you review, fix, and confirm it.
+          Upload or paste your CV once. It will be read into an editable profile, then you review, fix, and confirm it.
           That saved profile becomes your base CV for every future tailoring, so you never paste your CV again.
         </p>
         <div class="field">
@@ -119,7 +120,7 @@
       <section id="result-section" class="result-section hidden">
         <div id="match-score" class="match-score hidden">
           <h3>ATS Match Score</h3>
-          <p class="analysis-note">Computed from real keyword coverage — the way ATS filters and recruiter searches actually screen CVs. It updates live as you add or remove skills below.</p>
+          <p class="analysis-note">Computed from real keyword coverage, the way ATS filters and recruiter searches actually screen CVs. It updates live as you add or remove skills below.</p>
           <div class="score-row">
             <div class="score-box">
               <span id="score-before" class="score-value">–</span>
@@ -153,7 +154,7 @@
             <h3>ATS Compatibility Check</h3>
             <button id="ats-check-btn" class="btn btn-secondary btn-small">See exactly what ATS software sees</button>
           </div>
-          <p class="analysis-note">Every ATS starts the same way: parse your file into plain text, index it, filter on keywords. This builds your real document and shows you the actual parsed output plus the checks that pipeline runs. No tool can reproduce one vendor's private ranking or guarantee a #1 spot — anyone claiming that is selling snake oil — but a CV that parses cleanly and covers the required keywords clears the automated layer everywhere.</p>
+          <p class="analysis-note">Every ATS starts the same way: parse your file into plain text, index it, filter on keywords. This builds your real document and shows you the actual parsed output plus the checks that pipeline runs. No tool can reproduce one vendor's private ranking or guarantee a #1 spot (anyone claiming that is selling snake oil), but a CV that parses cleanly and covers the required keywords clears the automated layer everywhere.</p>
           <div id="ats-check-results" class="hidden">
             <ul id="ats-checklist" class="ats-checklist"></ul>
             <h4>What the parser sees (extracted from your actual document)</h4>
@@ -171,7 +172,7 @@
           </div>
           <div class="analysis-block">
             <h3>Skills Missing From Your CV</h3>
-            <p class="analysis-note">Based on the job description, these weren't found anywhere in your original CV. Only select ones you genuinely have evidence for — this tool won't fabricate proof for you.</p>
+            <p class="analysis-note">Based on the job description, these weren't found anywhere in your original CV. Only select ones you genuinely have evidence for. This tool won't fabricate proof for you.</p>
             <ul id="missing-skills-list" class="missing-skills-list"></ul>
             <p id="no-missing-skills-msg" class="no-missing-skills hidden">No obvious gaps found - good match on paper.</p>
             <button id="add-skills-btn" class="btn btn-secondary btn-small hidden">Add Selected to Skills</button>
@@ -188,14 +189,14 @@
         <div id="order-note" class="order-note hidden">
           <strong>Recommended section order applied.</strong>
           <span id="order-reason"></span>
-          <span class="order-hint">Use the ↑ ↓ arrows on each section below to change the order — downloads follow whatever order you set.</span>
+          <span class="order-hint">Use the ↑ ↓ arrows on each section below to change the order. Downloads follow whatever order you set.</span>
         </div>
 
         <h2>Tailored CV</h2>
         <div id="result-output" class="result-output"></div>
         <div class="template-picker">
           <h3>Choose a template</h3>
-          <p class="analysis-note">All four are ATS-safe — single column, real text, no tables or images. Only the typography, color, and layout accents change.</p>
+          <p class="analysis-note">Every template is ATS-safe: single column, real text, no tables or images. Only the typography, color, and layout accents change.</p>
           <div id="template-cards" class="template-cards"></div>
         </div>
         <div class="action-row">
